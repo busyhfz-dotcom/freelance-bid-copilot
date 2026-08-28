@@ -1,0 +1,33 @@
+# Dependencies
+**/node_modules/
+
+# Next.js and build output
+**/.next/
+**/out/
+**/dist/
+**/coverage/
+**/*.tsbuildinfo
+
+# Runtime configuration and secrets
+**/.env
+**/.env.*
+!**/.env.example
+
+# Vercel and local platform state
+**/.vercel/
+**/.turbo/
+
+# Electron/Playwright browser sessions and local data
+**/.auth/
+**/auth-state/
+**/browser-data/
+**/session-data/
+**/user-data/
+**/storage-state*.json
+**/copilot-data/
+
+# Logs, caches, and operating-system files
+**/*.log
+**/.cache/
+.DS_Store
+Thumbs.db
