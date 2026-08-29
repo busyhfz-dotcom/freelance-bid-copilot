@@ -3,6 +3,7 @@ import http from "node:http";
 import path from "node:path";
 import process from "node:process";
 import { chromium } from "playwright";
+import { normalizeProjectInspection } from "./project-normalizer.mjs";
 
 const VERSION = "0.5.1";
 const root = path.resolve(import.meta.dirname, "../..");
@@ -180,7 +181,13 @@ async function scanSite(site) {
           const projectBlock = await pageBlock(page);
           if (projectBlock) throw new Error(`${site}: ${projectBlock}`);
           await injectAdapters(page);
-          const inspected = await page.evaluate(() => window.BidCopilotAdapter.inspect());
+          const inspected = normalizeProjectInspection({
+            site,
+            item,
+            inspected: await page.evaluate(() => window.BidCopilotAdapter.inspect()),
+            currentUrl: page.url()
+          });
+          if (!inspected.title || !inspected.url) throw new Error("Inspection missing title or URL after listing fallback");
           const generated = await api("/api/generate", {
             worker: false,
             body: { ...inspected, freelancerProfile: profile, preferredDomains: domains, capturedAt: new Date().toISOString() }
@@ -238,7 +245,13 @@ async function submitApproved(approval) {
       const block = await pageBlock(page);
       if (block) throw new Error(`${site}: ${block}; submission stopped without bypass`);
       await injectAdapters(page);
-      const inspected = await page.evaluate(() => window.BidCopilotAdapter.inspect());
+      const inspected = normalizeProjectInspection({
+        site,
+        item: { ...(approval.project || {}), url: approval.url || approval.project?.url },
+        inspected: await page.evaluate(() => window.BidCopilotAdapter.inspect()),
+        currentUrl: page.url()
+      });
+      if (!inspected.title || !inspected.url) throw new Error("Fresh inspection missing title or URL after approval fallback");
       const fresh = await api("/api/generate", {
         worker: false,
         body: { ...inspected, freelancerProfile: profile, preferredDomains: domains, capturedAt: new Date().toISOString() }

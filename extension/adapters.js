@@ -212,8 +212,22 @@
     return null;
   }
 
+  function cleanProjectTitle(value = "") {
+    return String(value || "")
+      .replace(/\s+/g, " ")
+      .replace(/\s*(?:[|\-–—]\s*)?(?:کایا|Kaya)\s*$/i, "")
+      .trim();
+  }
+
   function projectTitle(a) {
-    return text(firstVisible(a.titleSelectors, true)) || document.title.replace(/\s*[|\-–].*$/, "").trim();
+    const visibleTitle = text(firstVisible(a.titleSelectors, true));
+    const metadata = [
+      document.querySelector("meta[property='og:title']")?.getAttribute("content"),
+      document.querySelector("meta[name='twitter:title']")?.getAttribute("content"),
+      document.querySelector("meta[itemprop='name']")?.getAttribute("content")
+    ];
+    const candidates = [visibleTitle, ...metadata, document.title].map(cleanProjectTitle).filter(Boolean);
+    return candidates.find((value) => !/^(?:پروژه.?ها|projects?|کایا|kaya)$/i.test(value)) || candidates[0] || "";
   }
 
   function contextualProjectText(a) {

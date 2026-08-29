@@ -64,6 +64,14 @@ test("Worker ranks a bounded five-to-ten batch and polls approvals independently
   assert.match(worker, /scanBusy/);
 });
 
+test("Worker normalizes list fallbacks before both generate requests", () => {
+  const worker = read("worker/src/index.mjs");
+  assert.match(worker, /import \{ normalizeProjectInspection \}/);
+  assert.equal((worker.match(/normalizeProjectInspection\(\{/g) || []).length, 2);
+  assert.match(worker, /item,/);
+  assert.match(worker, /approval\.project/);
+});
+
 test("Docker Worker is non-root and keeps auth state outside the image", () => {
   const docker = read("worker/Dockerfile");
   const entrypoint = read("worker/docker-entrypoint.sh");
