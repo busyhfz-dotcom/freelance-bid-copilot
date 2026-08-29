@@ -76,6 +76,15 @@ test("Docker Worker is non-root and keeps auth state outside the image", () => {
   assert.doesNotMatch(docker, /COPY worker\/secrets/);
 });
 
+test("Worker keeps persisted storage-state credentials owner-only", () => {
+  const worker = read("worker/src/index.mjs");
+  const initialize = worker.slice(worker.indexOf("async function initializeSensitiveState"), worker.indexOf("async function api"));
+  const persist = worker.slice(worker.indexOf("async function persistContext"), worker.indexOf("async function withSiteLock"));
+  assert.match(initialize, /await fs\.chmod\(market\.statePath, 0o600\)/);
+  assert.match(persist, /await context\.storageState/);
+  assert.match(persist, /await fs\.chmod\(markets\[site\]\.statePath, 0o600\)/);
+});
+
 test("hosted database uses a private RLS-enabled Supabase schema", () => {
   const schema = read("database/bid-copilot-schema.sql");
   const store = read("panel/lib/store.ts");
