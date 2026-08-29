@@ -67,7 +67,10 @@ async function atomicWrite(file, value) {
 }
 
 async function initializeSensitiveState(market) {
-  if (await fileExists(market.statePath)) return;
+  if (await fileExists(market.statePath)) {
+    await fs.chmod(market.statePath, 0o600);
+    return;
+  }
   if (!market.stateBase64) return;
   const decoded = Buffer.from(market.stateBase64, "base64").toString("utf8");
   JSON.parse(decoded);
@@ -139,7 +142,11 @@ async function contextFor(site) {
 
 async function persistContext(site) {
   const context = contexts.get(site);
-  if (context) await context.storageState({ path: markets[site].statePath }).catch(() => undefined);
+  if (!context) return;
+  try {
+    await context.storageState({ path: markets[site].statePath });
+    await fs.chmod(markets[site].statePath, 0o600);
+  } catch {}
 }
 
 async function withSiteLock(site, operation) {
