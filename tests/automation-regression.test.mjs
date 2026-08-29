@@ -66,8 +66,11 @@ test("Worker ranks a bounded five-to-ten batch and polls approvals independently
 
 test("Docker Worker is non-root and keeps auth state outside the image", () => {
   const docker = read("worker/Dockerfile");
+  const entrypoint = read("worker/docker-entrypoint.sh");
   const ignore = read("worker/.dockerignore");
-  assert.match(docker, /USER pwuser/);
+  assert.match(docker, /ENTRYPOINT \["\/usr\/local\/bin\/bid-copilot-entrypoint"\]/);
+  assert.match(entrypoint, /chown -R pwuser:pwuser \/data/);
+  assert.match(entrypoint, /exec runuser -u pwuser -- "\$@"/);
   assert.match(docker, /\/data\/auth/);
   assert.match(ignore, /secrets/);
   assert.doesNotMatch(docker, /COPY worker\/secrets/);
