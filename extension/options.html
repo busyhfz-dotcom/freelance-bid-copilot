@@ -1,0 +1,22 @@
+<!doctype html><html lang="fa" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="options.css"><title>Bid Copilot Settings</title></head><body><main>
+<div class="eyebrow">BID COPILOT v0.5.1</div><h1>تنظیمات افزونه</h1>
+<label>آدرس پنل<input id="panelUrl" dir="ltr" placeholder="http://localhost:3000"></label><label>Shared key<input id="copilotKey" dir="ltr" type="password"></label>
+<label>پروفایل مهارتی برای Match Score<textarea id="freelancerProfile" rows="5" placeholder="UI/UX، طراحی وب، WordPress، Figma..."></textarea><small class="help">فقط مهارت‌ها و پروژه‌هایی که واقعاً انجام می‌دهی.</small></label>
+<fieldset class="domains"><legend>حوزه‌های کاری مجاز (Hard Domain Gate)</legend><p>فقط پروژه‌ای که حوزه اصلی آن داخل این انتخاب‌ها باشد می‌تواند OPEN/BID شود. اگر چیزی انتخاب نکنی، افزونه با احتیاط از پروفایل مهارتی استنباط می‌کند.</p><div class="domainGrid">
+<label><input class="domainCheck" type="checkbox" value="web_ui"> Web / UI-UX</label>
+<label><input class="domainCheck" type="checkbox" value="wordpress"> WordPress / CMS</label>
+<label><input class="domainCheck" type="checkbox" value="branding"> Logo / Branding</label>
+<label><input class="domainCheck" type="checkbox" value="graphic"> Graphic Design</label>
+<label><input class="domainCheck" type="checkbox" value="development"> Software Development</label>
+<label><input class="domainCheck" type="checkbox" value="content"> Content / Translation</label>
+<label><input class="domainCheck" type="checkbox" value="marketing"> SEO / Marketing</label>
+<label><input class="domainCheck" type="checkbox" value="video"> Video / Motion</label>
+<label><input class="domainCheck" type="checkbox" value="architecture"> Architecture / 3D</label>
+<label><input class="domainCheck" type="checkbox" value="data"> Data / BI</label>
+</div><button id="inferDomains" type="button" class="ghost">پیشنهاد حوزه‌ها از روی پروفایل</button><small id="domainHint" class="help"></small></fieldset>
+<label>زمان تحویل پیش‌فرض (روز)<input id="defaultDuration" inputmode="numeric" placeholder="خالی = پیشنهاد هوشمند"></label>
+<label>حداقل Match برای Auto-submit<input id="minMatchScore" inputmode="numeric" value="70"></label><label>حداقل Job Score برای Auto-submit<input id="minJobScore" inputmode="numeric" value="65"></label>
+<label class="switch"><input id="autoSubmit" type="checkbox"><span><strong>Auto-submit امن</strong><small>فقط بعد از Approve → Fill و عبور از همه گاردها، ثبت نهایی انجام می‌شود.</small></span></label>
+<div class="warning">بودجه نامشخص، قیمت خارج از بودجه، Match/Job پایین، کیفیت بید پایین، فرم ناقص یا پروژه تکراری Auto-submit را متوقف می‌کند.</div>
+<button id="save">ذخیره تنظیمات</button><button id="clearHistory" type="button">پاک‌کردن تاریخچه گاردها</button><div id="saved"></div>
+</main><script src="domain-engine.js"></script><script src="options.js"></script></body></html>

@@ -1,0 +1,13 @@
+{
+  "name": "freelance-bid-copilot-worker",
+  "private": true,
+  "version": "0.5.1",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.mjs",
+    "capture-auth": "node scripts/capture-auth.mjs"
+  },
+  "dependencies": {
+    "playwright": "1.62.0"
+  }
+}

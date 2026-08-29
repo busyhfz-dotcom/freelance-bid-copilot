@@ -1,0 +1,42 @@
+{
+  "manifest_version": 3,
+  "name": "Freelance Bid Copilot",
+  "version": "0.5.1",
+  "description": "Hard Domain Gate project ranking and guarded bidding: explicit work domains, conservative domain inference, competition-aware pricing, Quick Bid Queue, duplicate guard and locked proposal filling.",
+  "permissions": [
+    "activeTab",
+    "storage",
+    "scripting"
+  ],
+  "host_permissions": [
+    "http://localhost:3000/*",
+    "https://*.kaya.ir/*",
+    "https://kaya.ir/*",
+    "https://*.ponisha.ir/*",
+    "https://ponisha.ir/*"
+  ],
+  "background": {
+    "service_worker": "service-worker.js"
+  },
+  "action": {
+    "default_title": "Bid Copilot",
+    "default_popup": "popup.html"
+  },
+  "options_page": "options.html",
+  "content_scripts": [
+    {
+      "matches": [
+        "https://*.kaya.ir/*",
+        "https://kaya.ir/*",
+        "https://*.ponisha.ir/*",
+        "https://ponisha.ir/*"
+      ],
+      "js": [
+        "adapter-core.js",
+        "adapters.js",
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}

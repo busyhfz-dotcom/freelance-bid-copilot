@@ -1,0 +1,4 @@
+node_modules
+secrets
+*.storage-state.json
+*.storage-state.b64

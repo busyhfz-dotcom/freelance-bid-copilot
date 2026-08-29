@@ -1,0 +1,284 @@
+(function (root, factory) {
+  const api = factory();
+  if (typeof module !== "undefined" && module.exports) module.exports = api;
+  root.CopilotDomain = api;
+})(typeof self !== "undefined" ? self : globalThis, function () {
+  const DOMAIN_DEFS = {
+    web_ui: {
+      label: "Web / UI-UX",
+      intent: [
+        /\bui\s*\/?\s*ux\b/i,
+        /رابط\s*کاربری|تجربه\s*کاربری/i,
+        /landing\s*page|homepage|dashboard/i,
+        /لندینگ(?:\s*پیج)?|هوم\s*پیج|داشبورد/i,
+        /طراحی\s+(?:وب|وب\s*سایت|وبسایت|سایت|صفحه\s*(?:وب|سایت))/i,
+        /\bui\s*(?:design|redesign)\b|web\s*(?:ui\s*)?design|website\s*(?:ui\s*)?(?:design|redesign)/i
+      ],
+      strong: ["ui/ux", "ui ux", "رابط کاربری", "تجربه کاربری", "طراحی وب", "طراحی سایت", "web design", "landing page", "لندینگ", "homepage", "هوم پیج", "dashboard", "داشبورد", "responsive design", "فرانت اند", "frontend"],
+      weak: ["figma", "html", "css", "responsive", "وب سایت", "وبسایت", "website"]
+    },
+    wordpress: {
+      label: "WordPress / CMS",
+      intent: [/wordpress|وردپرس|elementor|المنتور|woocommerce|ووکامرس|\bcms\b/i],
+      strong: ["wordpress", "وردپرس", "elementor", "المنتور", "woocommerce", "ووکامرس", "cms"],
+      weak: []
+    },
+    branding: {
+      label: "Logo / Branding",
+      intent: [/\blogo\b|لوگو|logotype|لوگوتایپ|brand\s*identity|هویت\s*بصری|برندینگ|آرم|نشان\s*تجاری/i],
+      strong: ["logo", "لوگو", "logotype", "لوگوتایپ", "branding", "برندینگ", "brand identity", "هویت بصری", "آرم", "نشان تجاری"],
+      weak: []
+    },
+    graphic: {
+      label: "Graphic Design",
+      intent: [/پوستر|\bposter\b|بنر|\bbanner\b|بروشور|brochure|کاتالوگ|catalog|packaging|بسته\s*بندی|پست\s*اینستاگرام|social\s*media\s*design/i],
+      strong: ["graphic design", "طراحی گرافیک", "پوستر", "poster", "بنر", "banner", "بروشور", "brochure", "کاتالوگ", "catalog", "packaging", "بسته بندی", "social media design", "پست اینستاگرام"],
+      weak: ["illustrator", "photoshop", "فتوشاپ"]
+    },
+    development: {
+      label: "Software Development",
+      intent: [/react|next\.?js|javascript|typescript|node\.?js|backend|بک\s*اند|\bapi\b|python|php|laravel|برنامه\s*نویسی|programming|اپلیکیشن|android|\bios\b/i],
+      strong: ["react", "next.js", "nextjs", "javascript", "typescript", "node.js", "backend", "بک اند", "api", "python", "php", "laravel", "برنامه نویسی", "programming", "اپلیکیشن", "android", "ios"],
+      weak: ["github", "git"]
+    },
+    content: {
+      label: "Content / Translation",
+      intent: [/تولید\s*محتوا|content\s*writing|copywriting|کپی\s*رایتینگ|مقاله|ترجمه|translation/i],
+      strong: ["تولید محتوا", "content writing", "copywriting", "کپی رایتینگ", "مقاله", "ترجمه", "translation"],
+      weak: []
+    },
+    marketing: {
+      label: "SEO / Marketing",
+      intent: [/\bseo\b|سئو|marketing|بازاریابی|تبلیغات|google\s*ads|دیجیتال\s*مارکتینگ/i],
+      strong: ["seo", "سئو", "marketing", "بازاریابی", "تبلیغات", "google ads", "دیجیتال مارکتینگ"],
+      weak: []
+    },
+    video: {
+      label: "Video / Motion",
+      intent: [/تدوین|video\s*editing|موشن\s*گرافیک|motion\s*graphics|after\s*effects|premiere/i],
+      strong: ["تدوین", "video editing", "موشن گرافیک", "motion graphics", "after effects", "premiere"],
+      weak: []
+    },
+    architecture: {
+      label: "Architecture / 3D",
+      intent: [/معماری|autocad|اتوکد|revit|رویت|3ds\s*max|3d\s*max|طراحی\s*داخلی|interior\s*design/i],
+      strong: ["معماری", "autocad", "اتوکد", "revit", "رویت", "3ds max", "3d max", "طراحی داخلی", "interior design"],
+      weak: []
+    },
+    data: {
+      label: "Data / BI",
+      intent: [/data\s*entry|ورود\s*اطلاعات|تحلیل\s*داده|data\s*analysis|power\s*bi|\bsql\b|اکسل|\bexcel\b/i],
+      strong: ["data entry", "ورود اطلاعات", "تحلیل داده", "data analysis", "power bi", "sql", "اکسل", "excel"],
+      weak: []
+    }
+  };
+
+  const DOMAIN_KEYS = Object.keys(DOMAIN_DEFS);
+  const GENERIC_TOKENS = new Set([
+    "طراحی", "design", "designer", "پروژه", "project", "انجام", "کار", "برای", "the", "and", "with", "یک", "ساخت", "ایجاد", "توسعه", "خدمات", "فروش", "حرفه", "حرفه ای", "نیاز", "مورد", "صفحه", "page", "سایت", "site", "وب", "web", "فروشگاه", "فروشگاهی", "اینترنتی"
+  ]);
+  const DOMAIN_ADJACENCY = {
+    "web_ui|wordpress": 0.82, "wordpress|web_ui": 0.82,
+    "web_ui|development": 0.55, "development|web_ui": 0.55,
+    "wordpress|development": 0.50, "development|wordpress": 0.50,
+    "branding|graphic": 0.55, "graphic|branding": 0.55,
+    "web_ui|graphic": 0.22, "graphic|web_ui": 0.22
+  };
+
+  function normalizeText(value = "") {
+    return String(value || "")
+      .toLowerCase()
+      .replace(/[يى]/g, "ی")
+      .replace(/ك/g, "ک")
+      .replace(/[\u200c\u200f]/g, " ")
+      .replace(/[^\p{L}\p{N}+#./]+/gu, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function phraseText(value = "") {
+    return normalizeText(value).replace(/[./]+/g, " ").replace(/\s+/g, " ").trim();
+  }
+
+  function hasPhrase(text, phrase) {
+    const hay = ` ${phraseText(text)} `;
+    const needle = ` ${phraseText(phrase)} `;
+    return needle.trim().length > 1 && hay.includes(needle);
+  }
+
+  function tokens(value = "") {
+    return new Set(phraseText(value).split(" ").filter((x) => x.length >= 3 && !GENERIC_TOKENS.has(x)));
+  }
+
+  function domainScores(parts) {
+    const scores = {};
+    for (const [key, def] of Object.entries(DOMAIN_DEFS)) {
+      let score = 0;
+      for (const part of parts || []) {
+        const value = part?.value || "";
+        const weight = Number(part?.weight || 1);
+        for (const term of new Set(def.strong.map(phraseText))) if (hasPhrase(value, term)) score += 2 * weight;
+        for (const term of new Set(def.weak.map(phraseText))) if (hasPhrase(value, term)) score += 0.5 * weight;
+      }
+      if (score > 0) scores[key] = score;
+    }
+    return scores;
+  }
+
+  function primaryIntent(title = "") {
+    const order = ["branding", "graphic", "video", "architecture", "content", "marketing", "data", "wordpress", "development", "web_ui"];
+    const normalizedTitle = phraseText(title);
+    const matched = order.filter((key) => DOMAIN_DEFS[key].intent.some((re) => re.test(title) || re.test(normalizedTitle)));
+
+    // A logo can be the requested output ("design a logo for a website") or
+    // merely an input to another output ("redesign the UI using the existing
+    // logo"). Only the latter may yield to a concrete non-branding deliverable.
+    if (matched.includes("branding") && matched.length > 1) {
+      const text = phraseText(title);
+      const brandingDeliverable = [
+        /\b(?:design|create|redesign|refresh|develop|make)\s+(?:(?:a|an|the|new|modern|company|business|complete)\s+){0,3}(?:logo|logotype|brand identity|visual identity|branding)\b/i,
+        /\b(?:logo|logotype|brand identity|visual identity|branding)\s+(?:design|redesign|creation|refresh)\b/i,
+        /\b(?:new|original|custom)\s+(?:logo|logotype|brand identity|visual identity|branding)\b/i,
+        /(?:لوگو|لوگوتایپ|هویت\s*بصری|برندینگ)(?:ی)?\s+(?:جدید|اختصاصی)/i,
+        /(?:طراحی|ساخت|ایجاد|بازطراحی|اصلاح)\s+(?:یک\s+)?(?:لوگو|لوگوتایپ|هویت\s*بصری|برندینگ)/i
+      ].some((re) => re.test(text));
+      const brandingContext = [
+        /\b(?:existing|current|provided)\s+(?:logo|logotype|brand identity|visual identity|branding)\b/i,
+        /\b(?:logo|logotype|brand identity|visual identity|branding)\s+(?:is\s+)?(?:existing|current|provided)\b/i,
+        /\b(?:using|use|with)\b(?:\s+\w+){0,5}\s+(?:existing|current|provided)\s+(?:logo|logotype|brand identity|visual identity|branding)\b/i,
+        /\b(?:based on|according to|matching)\b(?:\s+\w+){0,5}\s+(?:logo|logotype|brand identity|visual identity|branding)\b/i,
+        /(?:بر\s*اساس|مطابق|هماهنگ\s*با|با\s*استفاده\s*از)(?:\s+\S+){0,5}\s+(?:لوگو|لوگوتایپ|هویت\s*بصری|برندینگ)/i,
+        /(?:لوگو|لوگوتایپ|هویت\s*بصری|برندینگ)(?:ی)?\s+(?:موجود|فعلی|کنونی|ارائه\s*شده)/i
+      ].some((re) => re.test(text));
+      if (brandingContext && !brandingDeliverable) return matched.find((key) => key !== "branding") || "branding";
+    }
+
+    if (matched.length) return matched[0];
+    return "";
+  }
+
+  function dominantDomains(scores, minScore = 2) {
+    const entries = Object.entries(scores || {}).sort((a, b) => b[1] - a[1]);
+    if (!entries.length || entries[0][1] < minScore) return [];
+    const top = entries[0][1];
+    return entries.filter(([, value]) => value >= minScore && value >= top * 0.42).map(([key, score]) => ({ key, score, label: DOMAIN_DEFS[key].label }));
+  }
+
+  function inferAllowedDomains(profile = "") {
+    const scores = domainScores([{ value: profile, weight: 1 }]);
+    return Object.entries(scores)
+      .filter(([key, score]) => {
+        const hasStrong = DOMAIN_DEFS[key].strong.some((term) => hasPhrase(profile, term));
+        const hasTwoWeak = DOMAIN_DEFS[key].weak.filter((term) => hasPhrase(profile, term)).length >= 2;
+        return hasStrong || hasTwoWeak || score >= 2;
+      })
+      .sort((a, b) => b[1] - a[1])
+      .map(([key]) => key);
+  }
+
+  function resolveAllowedDomains(profile = "", explicit = []) {
+    const valid = Array.isArray(explicit) ? explicit.filter((key) => DOMAIN_KEYS.includes(key)) : [];
+    return valid.length ? [...new Set(valid)] : inferAllowedDomains(profile);
+  }
+
+  function alignment(projectKey, allowedDomains) {
+    if (!projectKey) return 0;
+    if (allowedDomains.includes(projectKey)) return 1;
+    let best = 0;
+    for (const key of allowedDomains) best = Math.max(best, DOMAIN_ADJACENCY[`${projectKey}|${key}`] || 0);
+    return best;
+  }
+
+  function gateFor(primaryKey, allowedDomains) {
+    if (!primaryKey) return { gate: "unknown", alignment: 0, cap: 60 };
+    if (allowedDomains.includes(primaryKey)) return { gate: "allowed", alignment: 1, cap: 96 };
+    const related = alignment(primaryKey, allowedDomains);
+    if (related >= 0.5) return { gate: "related", alignment: related, cap: 60 };
+    return { gate: "blocked", alignment: related, cap: 35 };
+  }
+
+  function matchProject(item = {}, profile = "", explicitAllowedDomains = []) {
+    if (!String(profile || "").trim() && !(Array.isArray(explicitAllowedDomains) && explicitAllowedDomains.length)) {
+      return {
+        score: null, domainGate: "profile_missing", primaryDomain: "", primaryDomainKey: "",
+        allowedDomains: [], allowedDomainLabels: [], skillGaps: [], matchReason: "پروفایل یا حوزه کاری تنظیم نشده است.", overlap: 0
+      };
+    }
+
+    const allowedDomains = resolveAllowedDomains(profile, explicitAllowedDomains);
+    const title = item.title || "";
+    const skills = Array.isArray(item.skills) ? item.skills : [];
+    const snippet = item.snippet || item.description || "";
+    const scores = domainScores([
+      { value: title, weight: 4 },
+      { value: skills.join(" "), weight: 3 },
+      { value: snippet, weight: 1 }
+    ]);
+    const intentKey = primaryIntent(title);
+    const dominant = dominantDomains(scores, 2);
+    const primaryKey = intentKey || dominant[0]?.key || "";
+    const primaryDomain = primaryKey ? DOMAIN_DEFS[primaryKey].label : "";
+    const gate = gateFor(primaryKey, allowedDomains);
+
+    const core = tokens(`${title} ${skills.join(" ")}`);
+    const extra = tokens(snippet);
+    const profileTokens = tokens(profile);
+    let coreOverlap = 0;
+    let extraOverlap = 0;
+    for (const token of core) if (profileTokens.has(token)) coreOverlap += 1;
+    for (const token of extra) if (!core.has(token) && profileTokens.has(token)) extraOverlap += 1;
+    const coreRatio = core.size ? coreOverlap / Math.max(1, Math.min(core.size, 7)) : 0;
+    const extraRatio = extra.size ? extraOverlap / Math.max(4, Math.min(extra.size, 18)) : 0;
+
+    let score;
+    if (gate.gate === "allowed") {
+      score = Math.round(70 + coreRatio * 18 + Math.min(6, coreOverlap * 2) + Math.min(4, extraRatio * 10));
+    } else if (gate.gate === "related") {
+      score = Math.round(38 + gate.alignment * 16 + coreRatio * 8 + Math.min(4, coreOverlap));
+    } else if (gate.gate === "blocked") {
+      score = Math.round(20 + coreRatio * 8 + Math.min(4, coreOverlap) + Math.min(3, extraRatio * 8));
+    } else {
+      score = Math.round(40 + coreRatio * 14 + Math.min(6, coreOverlap * 2));
+    }
+    score = Math.max(18, Math.min(gate.cap, score));
+
+    const evidenceDomains = dominant.map((d) => d.key);
+    if (primaryKey && !evidenceDomains.includes(primaryKey)) evidenceDomains.unshift(primaryKey);
+    const skillGaps = [];
+    if (gate.gate === "blocked" || gate.gate === "related") skillGaps.push(primaryDomain);
+    for (const key of evidenceDomains) {
+      if (!allowedDomains.includes(key) && !skillGaps.includes(DOMAIN_DEFS[key].label)) skillGaps.push(DOMAIN_DEFS[key].label);
+      if (skillGaps.length >= 2) break;
+    }
+
+    const labels = allowedDomains.map((key) => DOMAIN_DEFS[key].label);
+    const gateFa = gate.gate === "allowed" ? "داخل پروفایل" : gate.gate === "related" ? "حوزه نزدیک، نیازمند بررسی" : gate.gate === "blocked" ? "خارج از پروفایل" : "حوزه نامشخص";
+    const reason = primaryDomain
+      ? `حوزه اصلی: ${primaryDomain} • ${gateFa}${coreOverlap ? ` • ${coreOverlap} هم‌پوشانی تخصصی مستقیم` : ""}`
+      : `حوزه اصلی از عنوان با اطمینان تشخیص داده نشد • ${gateFa}`;
+
+    return {
+      score,
+      domainGate: gate.gate,
+      primaryDomain,
+      primaryDomainKey: primaryKey,
+      allowedDomains,
+      allowedDomainLabels: labels,
+      skillGaps: skillGaps.filter(Boolean).slice(0, 2),
+      matchReason: reason,
+      overlap: coreOverlap + extraOverlap,
+      coreOverlap,
+      extraOverlap
+    };
+  }
+
+  return {
+    DOMAIN_DEFS,
+    DOMAIN_KEYS,
+    normalizeText,
+    inferAllowedDomains,
+    resolveAllowedDomains,
+    primaryIntent,
+    matchProject
+  };
+});

@@ -1,0 +1,42 @@
+{
+  "name": "freelance-bid-copilot-desktop",
+  "private": true,
+  "version": "0.5.1",
+  "description": "Secure desktop workspace for authenticated Kaya and Ponisha browsing",
+  "main": "main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "dist:win": "electron-builder --win nsis"
+  },
+  "devDependencies": {
+    "electron": "^44.0.0",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "com.bidcopilot.workspace",
+    "productName": "Bid Copilot Workspace",
+    "asar": true,
+    "files": [
+      "main.cjs",
+      "preload.cjs",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../extension",
+        "to": "extension",
+        "filter": [
+          "adapter-core.js",
+          "adapters.js"
+        ]
+      }
+    ],
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  }
+}

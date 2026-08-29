@@ -1,0 +1,15 @@
+<!doctype html><html lang="fa" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="popup.css"><title>Bid Copilot</title></head><body>
+<div class="head"><div><span>FREELANCE</span><h1>Bid Copilot</h1></div><div class="bolt">⚡</div></div>
+<div id="site" class="site">در حال بررسی صفحه…</div>
+<div class="scannerBar"><button id="scanList" class="scanBtn">Scan project list</button><span>Quick Scout</span></div>
+<div id="queue" class="queue hidden"><div class="queueHead"><div><strong>Quick Bid Queue</strong><small id="queueMeta"></small></div><div class="queueTools"><button id="clearQueue" class="tiny">پاک</button><button id="nextBest" class="tiny accent hidden">Next Best ↗</button><button id="openBest" class="tiny accent">بهترین پروژه ↗</button></div></div><div id="queueItems" class="queueItems"></div></div>
+<div id="project" class="project hidden"><strong id="title"></strong><small id="budget"></small><div id="detected" class="detected"></div></div>
+<div id="preview" class="preview hidden">
+  <div class="verdict"><strong id="decision">—</strong><span id="decisionReason"></span></div>
+  <div class="metrics"><div><span>Job</span><strong id="jobScore">—</strong></div><div><span>Match</span><strong id="matchScore">—</strong></div><div><span>Quality</span><strong id="bidQuality">—</strong></div><div><span>Price</span><strong id="recommendedPrice">—</strong></div><div><span>Days</span><strong id="recommendedDuration">—</strong></div></div>
+  <div class="scoreLine"><span id="competition">Competition: —</span><span id="guard">Guard: —</span></div>
+  <small id="matchReason" class="matchReason"></small><small id="skillGap" class="skillGap hidden"></small><div id="bidPreview" class="bidPreview"></div>
+</div>
+<div id="actions" class="actions"><button id="inspect" class="secondary">Inspect page</button><button id="generate" class="secondary">Analyze & Generate</button><button id="approve" class="primary">Approve → Fill <span id="submitSuffix"></span></button></div>
+<div id="mini" class="mini"><button id="reset" class="linkBtn">Reset current project guard</button></div>
+<div id="status" class="status"></div><a class="settings" href="options.html" target="_blank">تنظیمات، پروفایل و Auto-submit</a><script src="popup.js"></script></body></html>
