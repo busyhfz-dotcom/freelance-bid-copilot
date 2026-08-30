@@ -49,6 +49,22 @@ describe("Kaya competition parsing", () => {
   });
 });
 
+describe("Kaya project-link filtering", () => {
+  test("accepts only real Kaya project detail links", () => {
+    assert.equal(adapterCore.isMarketplaceProjectDetailUrl("kaya.ir", "https://kaya.ir/jobs/40680029"), true);
+    assert.equal(adapterCore.isMarketplaceProjectDetailUrl("kaya.ir", "https://kaya.ir/jobs/40680029/"), true);
+  });
+
+  test("rejects skill and category links embedded inside project cards", () => {
+    assert.equal(adapterCore.isMarketplaceProjectDetailUrl("kaya.ir", "https://kaya.ir/projects/jobs/3"), false);
+    assert.equal(adapterCore.isMarketplaceProjectDetailUrl("kaya.ir", "https://kaya.ir/projects/ui-ux"), false);
+  });
+
+  test("rejects the external source link instead of leaving the Kaya session", () => {
+    assert.equal(adapterCore.isMarketplaceProjectDetailUrl("kaya.ir", "https://www.freelancer.com/projects/php/example"), false);
+  });
+});
+
 describe("manual review policy when Kaya hides budget", () => {
   test("missing budget becomes MAYBE rather than a false out-of-budget SKIP", () => {
     const result = bidPolicy.decisionFor({
