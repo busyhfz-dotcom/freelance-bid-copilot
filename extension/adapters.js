@@ -453,7 +453,7 @@
     if (!href || !label || label.length < 5 || label.length > 220) return -99;
     let u;
     try { u = new URL(href, location.href); } catch { return -99; }
-    if (u.hostname !== location.hostname || u.href === location.href) return -99;
+    if (!core.isMarketplaceProjectDetailUrl(location.hostname, u.href) || u.href === location.href) return -99;
     if (/^(?:javascript:|mailto:|tel:)/i.test(href)) return -99;
     const navNoise = /^(?:خانه|پروژه.?ها|ثبت(?:\s*سریع)?\s*پروژه|پروژه\s*جدید|فریلنسر|کارفرما|راهنما|ورود|ثبت.?نام|پروفایل|پیام|اعلان|home|projects?|post\s*project|new\s*project|freelancers?|login|register)$/i;
     if (navNoise.test(label.trim())) return -99;
