@@ -215,8 +215,15 @@
   function cleanProjectTitle(value = "") {
     return String(value || "")
       .replace(/\s+/g, " ")
-      .replace(/\s*(?:[|\-–—]\s*)?(?:کایا|Kaya)\s*$/i, "")
+      .replace(/\s*(?:[|\-–—]\s*)?(?:(?:گروه\s*)?کایا|Kaya(?:\s*Group)?)\s*$/i, "")
       .trim();
+  }
+
+  function meaningfulProjectTitle(value = "") {
+    const title = cleanProjectTitle(value);
+    if (title.length < 5 || !/[\p{L}\p{N}]/u.test(title)) return "";
+    if (/^(?:\|?\s*گروه|پروژه.?ها|projects?|کایا|kaya)$/i.test(title)) return "";
+    return title;
   }
 
   function projectTitle(a) {
@@ -226,8 +233,8 @@
       document.querySelector("meta[name='twitter:title']")?.getAttribute("content"),
       document.querySelector("meta[itemprop='name']")?.getAttribute("content")
     ];
-    const candidates = [visibleTitle, ...metadata, document.title].map(cleanProjectTitle).filter(Boolean);
-    return candidates.find((value) => !/^(?:پروژه.?ها|projects?|کایا|kaya)$/i.test(value)) || candidates[0] || "";
+    const candidates = [visibleTitle, ...metadata, document.title].map(meaningfulProjectTitle).filter(Boolean);
+    return candidates[0] || "";
   }
 
   function contextualProjectText(a) {
@@ -493,7 +500,8 @@
       const raw = readText(card);
       const linkScore = projectLinkScore(anchor, raw, readText);
       if (linkScore < 9) continue;
-      const title = readText(anchor).replace(/\s+/g, " ").trim();
+      const title = meaningfulProjectTitle(readText(anchor));
+      if (!title) continue;
       const budget = budgetFromText(raw);
       const ageText = ageFromText(raw);
       const snippet = cleanListSnippet(raw, title, budget);
