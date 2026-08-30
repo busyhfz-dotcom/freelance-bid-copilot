@@ -4,6 +4,7 @@ import { approvalId, canQueueForApproval, createApprovalToken } from "@/lib/appr
 import { attachTelegramMessage, discardUnsentApproval, listBidApprovals, queueBidApproval } from "@/lib/store";
 import { sendApprovalRequest } from "@/lib/telegram";
 import type { BidApprovalRecord, ProjectRecord } from "@/lib/types";
+import { countApprovalsForDay } from "@/lib/daily-approval-policy";
 
 export const runtime = "nodejs";
 
@@ -26,6 +27,10 @@ export async function POST(req: NextRequest) {
   }
   const pendingLimit = integerEnv("AUTOMATION_MAX_PENDING", 10, 5, 25);
   const approvals = await listBidApprovals(100);
+  const dailyLimit = integerEnv("AUTOMATION_DAILY_TELEGRAM_LIMIT", 10, 5, 10);
+  if (countApprovalsForDay(approvals) >= dailyLimit) {
+    return NextResponse.json({ error: "Daily Telegram approval limit reached" }, { status: 429 });
+  }
   if (approvals.filter((item) => item.status === "pending" || item.status === "approved").length >= pendingLimit) {
     return NextResponse.json({ error: "Approval queue is full" }, { status: 429 });
   }

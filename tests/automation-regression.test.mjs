@@ -26,6 +26,14 @@ test("approval queue requires a guarded BID inside budget", () => {
   assert.match(policy, /jobScore/);
 });
 
+test("Telegram approval delivery is capped to ten per Tehran day", () => {
+  const candidates = read("panel/app/api/automation/candidates/route.ts");
+  const dailyPolicy = read("panel/lib/daily-approval-policy.ts");
+  assert.match(candidates, /AUTOMATION_DAILY_TELEGRAM_LIMIT/);
+  assert.match(candidates, /countApprovalsForDay/);
+  assert.match(dailyPolicy, /Asia\/Tehran/);
+});
+
 test("approved work is claimed atomically and cannot be submitted twice", () => {
   const store = read("panel/lib/store.ts");
   assert.match(store, /FOR UPDATE SKIP LOCKED/);
