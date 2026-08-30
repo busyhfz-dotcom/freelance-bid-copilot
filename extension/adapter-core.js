@@ -80,5 +80,17 @@
     return score;
   }
 
-  return { normalizeDigits, extractBudget, explicitProposalCountFromText, fieldRoleScore };
+  function isMarketplaceProjectDetailUrl(pageHostname = "", href = "") {
+    try {
+      const host = String(pageHostname || "").toLowerCase();
+      const url = new URL(href, `https://${host}/`);
+      if (url.hostname.toLowerCase() !== host) return false;
+      if (host === "kaya.ir" || host.endsWith(".kaya.ir")) return /^\\/jobs\\/\\d+\\/?$/.test(url.pathname);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  return { normalizeDigits, extractBudget, explicitProposalCountFromText, fieldRoleScore, isMarketplaceProjectDetailUrl };
 });
