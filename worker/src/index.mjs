@@ -4,6 +4,7 @@ import path from "node:path";
 import process from "node:process";
 import { chromium } from "playwright";
 import { normalizeProjectInspection } from "./project-normalizer.mjs";
+import { blockedRetryDelayMs, describeWorkerError } from "./runtime-policy.mjs";
 
 const VERSION = "0.5.1";
 const root = path.resolve(import.meta.dirname, "../..");
@@ -18,6 +19,7 @@ const scanInterval = clamp(process.env.SCAN_INTERVAL_SECONDS, 60, 30, 900) * 100
 const approvalPoll = clamp(process.env.APPROVAL_POLL_SECONDS, 2, 1, 15) * 1000;
 const inspectLimit = clamp(process.env.INSPECT_LIMIT_PER_SITE, 15, 5, 30);
 const topPerCycle = clamp(process.env.TOP_BIDS_PER_CYCLE, 5, 5, 10);
+const blockedSiteRetry = blockedRetryDelayMs(process.env.BLOCKED_SITE_RETRY_MINUTES);
 const port = clamp(process.env.PORT, 8080, 1, 65535);
 
 const markets = {
@@ -42,6 +44,7 @@ let status = "starting";
 let statusMessage = "Worker is starting";
 const contexts = new Map();
 const locks = new Map();
+const blockedUntil = new Map();
 const sessionState = { kaya: "error", ponisha: "error" };
 const seenFile = path.join(dataDir, "state/seen.json");
 let seen = new Set();
@@ -159,6 +162,9 @@ async function withSiteLock(site, operation) {
 
 async function scanSite(site) {
   return withSiteLock(site, async () => {
+    const retryAt = blockedUntil.get(site) || 0;
+    if (retryAt > Date.now()) return [];
+    blockedUntil.delete(site);
     await heartbeat("scanning", `Scanning ${site}`, site);
     const context = await contextFor(site);
     const page = await context.newPage();
@@ -168,6 +174,7 @@ async function scanSite(site) {
       const block = await pageBlock(page);
       if (block) {
         sessionState[site] = block;
+        blockedUntil.set(site, Date.now() + blockedSiteRetry);
         await heartbeat("blocked", `${site}: ${block}; manual login or CAPTCHA action is required`, site);
         return candidates;
       }
@@ -179,7 +186,12 @@ async function scanSite(site) {
         try {
           await page.goto(item.url, { waitUntil: "domcontentloaded", timeout: 30_000 });
           const projectBlock = await pageBlock(page);
-          if (projectBlock) throw new Error(`${site}: ${projectBlock}`);
+          if (projectBlock) {
+            sessionState[site] = projectBlock;
+            blockedUntil.set(site, Date.now() + blockedSiteRetry);
+            await heartbeat("blocked", `${site}: ${projectBlock}; manual login or CAPTCHA action is required`, site);
+            break;
+          }
           await injectAdapters(page);
           const inspected = normalizeProjectInspection({
             site,
@@ -199,6 +211,7 @@ async function scanSite(site) {
         }
       }
       await persistContext(site);
+      if (sessionState[site] === "ready") await heartbeat("scanning", `${site}: session ready`, site);
       return candidates;
     } finally {
       await page.close().catch(() => undefined);
@@ -304,9 +317,10 @@ async function approvalCycle() {
     await api("/api/automation/result", { body: { id: approval.id, status: "submitted" } });
     await heartbeat("idle", `Bid ${approval.id} submitted and verified`, approval.site);
   } catch (error) {
-    console.error("approval:", error.message);
-    if (approval?.id) await api("/api/automation/result", { body: { id: approval.id, status: "failed", error: error.message } }).catch(() => undefined);
-    await heartbeat("blocked", error.message, approval?.site || "");
+    const message = describeWorkerError(error);
+    console.error("approval:", message);
+    if (approval?.id) await api("/api/automation/result", { body: { id: approval.id, status: "failed", error: message } }).catch(() => undefined);
+    await heartbeat("blocked", message, approval?.site || "");
   } finally {
     approvalBusy = false;
   }
@@ -320,8 +334,8 @@ async function main() {
   adapterBundle = `${await fs.readFile(path.join(root, "extension/adapter-core.js"), "utf8")}\n${await fs.readFile(path.join(root, "extension/adapters.js"), "utf8")}`;
   browser = await chromium.launch({ headless: true });
   await heartbeat("idle", "Worker is online");
-  void guardedScanCycle().catch(async (error) => { console.error("scan:", error); await heartbeat("error", error.message); });
-  const scanTimer = setInterval(() => void guardedScanCycle().catch(async (error) => { console.error("scan:", error); await heartbeat("error", error.message); }), scanInterval);
+  void guardedScanCycle().catch(async (error) => { const message = describeWorkerError(error); console.error("scan:", message); await heartbeat("error", message); });
+  const scanTimer = setInterval(() => void guardedScanCycle().catch(async (error) => { const message = describeWorkerError(error); console.error("scan:", message); await heartbeat("error", message); }), scanInterval);
   const approvalTimer = setInterval(() => void approvalCycle(), approvalPoll);
   const heartbeatTimer = setInterval(() => void heartbeat(), 25_000);
   process.once("SIGTERM", () => shutdown([scanTimer, approvalTimer, heartbeatTimer]));
