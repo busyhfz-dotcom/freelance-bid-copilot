@@ -23,3 +23,4 @@ The files under `worker/secrets/` are equivalent to logged-in browser credential
 5. Set the marketplace list URLs to the exact logged-in project listing pages if the defaults redirect.
 
 The Worker never bypasses CAPTCHA or login challenges. It pauses, reports `blocked`, and sends a Telegram alert through the panel. Failed/uncertain submissions are not retried automatically.
+Blocked marketplaces are retried independently after `BLOCKED_SITE_RETRY_MINUTES` (15 by default), so one challenged site does not stop scanning the others. The panel persists alert fingerprints and suppresses identical Telegram warnings for `WORKER_ALERT_COOLDOWN_MINUTES` (30 by default), then sends one recovery message when the site is ready again.
