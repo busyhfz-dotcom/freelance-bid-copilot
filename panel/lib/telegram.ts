@@ -73,6 +73,17 @@ export async function sendWorkerAlert(heartbeat: WorkerHeartbeat) {
   });
 }
 
+export async function sendWorkerRecovery(heartbeat: WorkerHeartbeat, site = "") {
+  const chatId = process.env.TELEGRAM_CHAT_ID?.trim();
+  if (!chatId) return;
+  const target = site ? `${escapeHtml(site)}: session ready; scanning resumed` : "connection recovered";
+  await telegram("sendMessage", {
+    chat_id: chatId,
+    text: `✅ Worker ${escapeHtml(heartbeat.workerId)}: ${target}`,
+    parse_mode: "HTML"
+  });
+}
+
 export async function sendSubmissionResult(record: BidApprovalRecord) {
   const chatId = process.env.TELEGRAM_CHAT_ID?.trim();
   if (!chatId) return;

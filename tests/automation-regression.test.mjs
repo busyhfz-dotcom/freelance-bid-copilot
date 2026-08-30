@@ -53,6 +53,19 @@ test("Worker blocks CAPTCHA and login challenges instead of bypassing them", () 
   assert.match(worker, /login_required/);
   assert.match(worker, /submission stopped without bypass/);
   assert.match(worker, /no automatic retry will occur/);
+  assert.match(worker, /BLOCKED_SITE_RETRY_MINUTES/);
+  assert.match(worker, /blockedUntil/);
+});
+
+test("Worker alerts are deduplicated persistently and report recovery", () => {
+  const heartbeat = read("panel/app/api/automation/heartbeat/route.ts");
+  const policy = read("panel/lib/worker-alert-policy.ts");
+  const telegram = read("panel/lib/telegram.ts");
+  assert.match(heartbeat, /previous\?\.alertState/);
+  assert.match(heartbeat, /WORKER_ALERT_COOLDOWN_MINUTES/);
+  assert.match(policy, /cooldownExpired/);
+  assert.match(policy, /action: "recovered"/);
+  assert.match(telegram, /sendWorkerRecovery/);
 });
 
 test("Worker ranks a bounded five-to-ten batch and polls approvals independently", () => {

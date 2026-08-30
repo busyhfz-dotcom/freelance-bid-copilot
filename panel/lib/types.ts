@@ -112,4 +112,14 @@ export type WorkerHeartbeat = {
   sessionState?: Record<string, "ready" | "login_required" | "captcha" | "error">;
   message?: string;
   version?: string;
+  alertState?: Record<string, WorkerAlertEntry>;
+};
+
+export type WorkerAlertEntry = {
+  active: boolean;
+  fingerprint: string;
+  status: "blocked" | "error";
+  message: string;
+  lastSentAt: string;
+  recoveredAt?: string;
 };
