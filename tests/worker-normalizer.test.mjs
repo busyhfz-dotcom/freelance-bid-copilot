@@ -47,4 +47,34 @@ describe("Worker project inspection fallback", () => {
     assert.equal(result.url, "https://kaya.ir/jobs/2");
     assert.equal(result.title, "پروژه آزمایشی");
   });
+
+  test("falls back to the listing title when Kaya detail metadata is only a site suffix", () => {
+    const result = normalizeProjectInspection({
+      site: "kaya",
+      item: { title: "طراحی سایت وردپرس", url: "https://kaya.ir/jobs/3" },
+      inspected: { title: "| گروه", url: "https://kaya.ir/jobs/3" }
+    });
+
+    assert.equal(result.title, "طراحی سایت وردپرس");
+  });
+
+  test("removes the Kaya site suffix from a valid detail title", () => {
+    const result = normalizeProjectInspection({
+      site: "kaya",
+      item: { title: "عنوان فهرست", url: "https://kaya.ir/jobs/4" },
+      inspected: { title: "پیاده‌سازی داشبورد | گروه کایا", url: "https://kaya.ir/jobs/4" }
+    });
+
+    assert.equal(result.title, "پیاده‌سازی داشبورد");
+  });
+
+  test("rejects a project when both detail and listing titles are placeholders", () => {
+    const result = normalizeProjectInspection({
+      site: "kaya",
+      item: { title: "| گروه", url: "https://kaya.ir/jobs/5" },
+      inspected: { title: "گروه کایا", url: "https://kaya.ir/jobs/5" }
+    });
+
+    assert.equal(result.title, "");
+  });
 });
