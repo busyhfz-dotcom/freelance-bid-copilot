@@ -74,6 +74,14 @@
   };
 
   const DOMAIN_KEYS = Object.keys(DOMAIN_DEFS);
+  const DOMAIN_ALIASES = {
+    "web/ui": "web_ui",
+    "web ui": "web_ui",
+    "web / ui ux": "web_ui",
+    "ui/ux": "web_ui",
+    "wordpress/cms": "wordpress",
+    "wordpress / cms": "wordpress"
+  };
   const GENERIC_TOKENS = new Set([
     "طراحی", "design", "designer", "پروژه", "project", "انجام", "کار", "برای", "the", "and", "with", "یک", "ساخت", "ایجاد", "توسعه", "خدمات", "فروش", "حرفه", "حرفه ای", "نیاز", "مورد", "صفحه", "page", "سایت", "site", "وب", "web", "فروشگاه", "فروشگاهی", "اینترنتی"
   ]);
@@ -176,8 +184,14 @@
       .map(([key]) => key);
   }
 
+  function normalizeDomainKey(value) {
+    if (typeof value !== "string") return "";
+    if (DOMAIN_KEYS.includes(value)) return value;
+    return DOMAIN_ALIASES[normalizeText(value).replace(/-/g, " ")] || "";
+  }
+
   function resolveAllowedDomains(profile = "", explicit = []) {
-    const valid = Array.isArray(explicit) ? explicit.filter((key) => DOMAIN_KEYS.includes(key)) : [];
+    const valid = Array.isArray(explicit) ? explicit.map(normalizeDomainKey).filter(Boolean) : [];
     return valid.length ? [...new Set(valid)] : inferAllowedDomains(profile);
   }
 
