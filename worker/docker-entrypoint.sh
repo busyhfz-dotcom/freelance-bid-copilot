@@ -6,4 +6,8 @@ set -eu
 mkdir -p /data/auth /data/state
 chown -R pwuser:pwuser /data
 
+if [ "${PONISHA_REMOTE_LOGIN_ENABLED:-false}" = "true" ]; then
+  /usr/local/bin/bid-copilot-remote-login &
+fi
+
 exec runuser -u pwuser -- "$@"
