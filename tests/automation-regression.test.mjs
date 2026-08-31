@@ -93,6 +93,21 @@ test("Worker normalizes list fallbacks before both generate requests", () => {
   assert.match(worker, /approval\.project/);
 });
 
+test("Worker isolates timed-out project navigations and bounds production polling", () => {
+  const worker = read("worker/src/index.mjs");
+  assert.match(worker, /clamp\(process\.env\.SCAN_INTERVAL_SECONDS, 300, 300, 3600\)/);
+  assert.match(worker, /clamp\(process\.env\.APPROVAL_POLL_SECONDS, 15, 15, 60\)/);
+  assert.match(worker, /clamp\(process\.env\.INSPECT_LIMIT_PER_SITE, 5, 1, 5\)/);
+
+  const scanSite = worker.slice(worker.indexOf("async function scanSite"), worker.indexOf("async function scanCycle"));
+  assert.match(scanSite, /const listingPage = await context\.newPage\(\)/);
+  assert.match(scanSite, /const detailPage = await context\.newPage\(\)/);
+  assert.match(scanSite, /await detailPage\.goto\(item\.url/);
+  assert.match(scanSite, /await detailPage\.close\(\)\.catch/);
+  assert.match(scanSite, /await listingPage\.close\(\)\.catch/);
+  assert.doesNotMatch(scanSite, /await listingPage\.goto\(item\.url/);
+});
+
 test("Docker Worker is non-root and keeps auth state outside the image", () => {
   const docker = read("worker/Dockerfile");
   const entrypoint = read("worker/docker-entrypoint.sh");

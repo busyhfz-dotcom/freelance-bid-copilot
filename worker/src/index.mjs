@@ -15,9 +15,9 @@ const workerKey = process.env.WORKER_KEY || "";
 const workerId = process.env.WORKER_ID || "primary-worker";
 const profile = process.env.FREELANCER_PROFILE || "";
 const domains = String(process.env.PREFERRED_DOMAINS || "").split(",").map((value) => value.trim()).filter(Boolean);
-const scanInterval = clamp(process.env.SCAN_INTERVAL_SECONDS, 60, 30, 900) * 1000;
-const approvalPoll = clamp(process.env.APPROVAL_POLL_SECONDS, 2, 1, 15) * 1000;
-const inspectLimit = clamp(process.env.INSPECT_LIMIT_PER_SITE, 15, 5, 30);
+const scanInterval = clamp(process.env.SCAN_INTERVAL_SECONDS, 300, 300, 3600) * 1000;
+const approvalPoll = clamp(process.env.APPROVAL_POLL_SECONDS, 15, 15, 60) * 1000;
+const inspectLimit = clamp(process.env.INSPECT_LIMIT_PER_SITE, 5, 1, 5);
 const topPerCycle = clamp(process.env.TOP_BIDS_PER_CYCLE, 5, 5, 10);
 const blockedSiteRetry = blockedRetryDelayMs(process.env.BLOCKED_SITE_RETRY_MINUTES);
 const port = clamp(process.env.PORT, 8080, 1, 65535);
@@ -167,11 +167,11 @@ async function scanSite(site) {
     blockedUntil.delete(site);
     await heartbeat("scanning", `Scanning ${site}`, site);
     const context = await contextFor(site);
-    const page = await context.newPage();
+    const listingPage = await context.newPage();
     const candidates = [];
     try {
-      await page.goto(markets[site].listUrl, { waitUntil: "domcontentloaded", timeout: 30_000 });
-      const block = await pageBlock(page);
+      await listingPage.goto(markets[site].listUrl, { waitUntil: "domcontentloaded", timeout: 30_000 });
+      const block = await pageBlock(listingPage);
       if (block) {
         sessionState[site] = block;
         blockedUntil.set(site, Date.now() + blockedSiteRetry);
@@ -179,25 +179,26 @@ async function scanSite(site) {
         return candidates;
       }
       sessionState[site] = "ready";
-      await injectAdapters(page);
-      const listing = await page.evaluate(() => window.BidCopilotAdapter.scanList());
+      await injectAdapters(listingPage);
+      const listing = await listingPage.evaluate(() => window.BidCopilotAdapter.scanList());
       const freshItems = (listing?.items || []).filter((item) => item.url && !seen.has(item.url)).slice(0, inspectLimit);
       for (const item of freshItems) {
+        const detailPage = await context.newPage();
         try {
-          await page.goto(item.url, { waitUntil: "domcontentloaded", timeout: 30_000 });
-          const projectBlock = await pageBlock(page);
+          await detailPage.goto(item.url, { waitUntil: "domcontentloaded", timeout: 30_000 });
+          const projectBlock = await pageBlock(detailPage);
           if (projectBlock) {
             sessionState[site] = projectBlock;
             blockedUntil.set(site, Date.now() + blockedSiteRetry);
             await heartbeat("blocked", `${site}: ${projectBlock}; manual login or CAPTCHA action is required`, site);
             break;
           }
-          await injectAdapters(page);
+          await injectAdapters(detailPage);
           const inspected = normalizeProjectInspection({
             site,
             item,
-            inspected: await page.evaluate(() => window.BidCopilotAdapter.inspect()),
-            currentUrl: page.url()
+            inspected: await detailPage.evaluate(() => window.BidCopilotAdapter.inspect()),
+            currentUrl: detailPage.url()
           });
           if (!inspected.title || !inspected.url) throw new Error("Inspection missing title or URL after listing fallback");
           const generated = await api("/api/generate", {
@@ -208,13 +209,15 @@ async function scanSite(site) {
           else seen.add(item.url);
         } catch (error) {
           console.error(`inspect ${site} ${item.url}:`, error.message);
+        } finally {
+          await detailPage.close().catch(() => undefined);
         }
       }
       await persistContext(site);
       if (sessionState[site] === "ready") await heartbeat("scanning", `${site}: session ready`, site);
       return candidates;
     } finally {
-      await page.close().catch(() => undefined);
+      await listingPage.close().catch(() => undefined);
     }
   });
 }
