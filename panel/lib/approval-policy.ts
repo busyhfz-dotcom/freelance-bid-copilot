@@ -23,8 +23,12 @@ export function approvalId(project: ProjectRecord) {
 }
 
 export function canQueueForApproval(project: ProjectRecord, minimumScore = 72) {
-  return project.decision === "BID"
-    && project.guardReady === true
+  const guardedBid = project.decision === "BID" && project.guardReady === true;
+  const safeManualReview = project.decision === "MAYBE"
+    && project.domainGate === "allowed"
+    && project.priceWithinBudget === true
+    && (project.bidQualityScore || 0) >= 70;
+  return (guardedBid || safeManualReview)
     && project.priceWithinBudget === true
     && (project.jobScore || 0) >= minimumScore
     && Boolean(project.bid && project.recommendedPrice && project.recommendedDuration);
