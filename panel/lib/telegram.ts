@@ -23,14 +23,16 @@ export async function sendApprovalRequest(record: BidApprovalRecord, token: stri
   const chatId = process.env.TELEGRAM_CHAT_ID?.trim();
   if (!chatId) throw new Error("TELEGRAM_CHAT_ID is not configured");
   const project = record.project;
+  const reviewLabel = project.decision === "MAYBE" ? "نیازمند بررسی شما" : "آمادهٔ تأیید";
   const proposal = escapeHtml(project.bid).slice(0, 1800);
   const text = [
-    "<b>پیشنهاد آمادهٔ تأیید</b>",
+    "<b>بهترین آگهی این چرخه</b>",
     "",
     `<b>${escapeHtml(project.title)}</b>`,
     `${escapeHtml(project.site)} · امتیاز ${project.jobScore ?? "—"} · تطابق ${project.matchScore ?? "—"}`,
     `بودجه: ${escapeHtml(project.budget || "نامشخص")}`,
     `بید: <b>${escapeHtml(project.recommendedPrice)}</b> · ${escapeHtml(project.recommendedDuration)} روز`,
+    `وضعیت: ${reviewLabel}`,
     "",
     proposal,
     "",

@@ -121,6 +121,15 @@ describe("Logo/Branding versus Web/UI regression", () => {
 });
 
 describe("Hard Domain Gate", () => {
+  test("display labels from Worker environment resolve to internal domain keys", () => {
+    assertClassification({
+      project: { title: "Restaurant website UI design", skills: ["Responsive Design"] },
+      preferredDomains: ["Web/UI", "WordPress/CMS"],
+      primaryDomainKey: "web_ui",
+      domainGate: "allowed"
+    });
+  });
+
   test("slash-separated profile terms infer Branding", () => {
     assertClassification({
       project: { title: "Modern logo design" },

@@ -24,6 +24,8 @@ test("approval queue requires a guarded BID inside budget", () => {
   assert.match(policy, /project\.guardReady === true/);
   assert.match(policy, /project\.priceWithinBudget === true/);
   assert.match(policy, /jobScore/);
+  assert.match(policy, /safeManualReview/);
+  assert.match(policy, /project\.domainGate === "allowed"/);
 });
 
 test("Telegram approval delivery is capped to ten per Tehran day", () => {
@@ -49,9 +51,9 @@ test("browser Worker submits only after a server approval claim and fresh guard 
   assert.match(approvalCycle, /if \(!approval\) return/);
   assert.match(approvalCycle, /await submitApproved\(approval\)/);
   assert.equal((worker.match(/BidCopilotAdapter\.submit\(\)/g) || []).length, 1);
-  assert.match(worker, /fresh\.decision !== "BID"/);
-  assert.match(worker, /fresh\.guardReady !== true/);
-  assert.match(worker, /fresh\.priceWithinBudget !== true/);
+  assert.match(worker, /const guardedBid = fresh\.decision === "BID"/);
+  assert.match(worker, /const safeManualReview = fresh\.decision === "MAYBE"/);
+  assert.match(worker, /Fresh approval safety revalidation failed/);
   assert.match(worker, /Project budget changed after approval/);
 });
 
@@ -76,10 +78,11 @@ test("Worker alerts are deduplicated persistently and report recovery", () => {
   assert.match(telegram, /sendWorkerRecovery/);
 });
 
-test("Worker ranks a bounded five-to-ten batch and polls approvals independently", () => {
+test("Worker sends only the best candidate and polls approvals independently", () => {
   const worker = read("worker/src/index.mjs");
   assert.match(worker, /TOP_BIDS_PER_CYCLE/);
-  assert.match(worker, /clamp\(process\.env\.TOP_BIDS_PER_CYCLE, 5, 5, 10\)/);
+  assert.match(worker, /clamp\(process\.env\.TOP_BIDS_PER_CYCLE, 1, 1, 1\)/);
+  assert.match(worker, /safeManualReview/);
   assert.match(worker, /approvalTimer/);
   assert.match(worker, /scanTimer/);
   assert.match(worker, /scanBusy/);
@@ -106,6 +109,14 @@ test("Worker isolates timed-out project navigations and bounds production pollin
   assert.match(scanSite, /await detailPage\.close\(\)\.catch/);
   assert.match(scanSite, /await listingPage\.close\(\)\.catch/);
   assert.doesNotMatch(scanSite, /await listingPage\.goto\(item\.url/);
+});
+
+test("technical Worker alerts are opt-in so the Telegram chat stays approval-only", () => {
+  const heartbeat = read("panel/app/api/automation/heartbeat/route.ts");
+  const telegram = read("panel/lib/telegram.ts");
+  assert.match(heartbeat, /TELEGRAM_WORKER_ALERTS_ENABLED/);
+  assert.match(telegram, /بهترین آگهی این چرخه/);
+  assert.match(telegram, /inline_keyboard/);
 });
 
 test("Docker Worker is non-root and keeps auth state outside the image", () => {

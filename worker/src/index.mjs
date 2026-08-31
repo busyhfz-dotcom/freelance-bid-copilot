@@ -18,7 +18,7 @@ const domains = String(process.env.PREFERRED_DOMAINS || "").split(",").map((valu
 const scanInterval = clamp(process.env.SCAN_INTERVAL_SECONDS, 300, 300, 3600) * 1000;
 const approvalPoll = clamp(process.env.APPROVAL_POLL_SECONDS, 15, 15, 60) * 1000;
 const inspectLimit = clamp(process.env.INSPECT_LIMIT_PER_SITE, 5, 1, 5);
-const topPerCycle = clamp(process.env.TOP_BIDS_PER_CYCLE, 5, 5, 10);
+const topPerCycle = clamp(process.env.TOP_BIDS_PER_CYCLE, 1, 1, 1);
 const blockedSiteRetry = blockedRetryDelayMs(process.env.BLOCKED_SITE_RETRY_MINUTES);
 const port = clamp(process.env.PORT, 8080, 1, 65535);
 
@@ -205,7 +205,12 @@ async function scanSite(site) {
             worker: false,
             body: { ...inspected, freelancerProfile: profile, preferredDomains: domains, capturedAt: new Date().toISOString() }
           });
-          if (generated.decision === "BID" && generated.guardReady === true && generated.priceWithinBudget === true) candidates.push(generated);
+          const guardedBid = generated.decision === "BID" && generated.guardReady === true;
+          const safeManualReview = generated.decision === "MAYBE"
+            && generated.domainGate === "allowed"
+            && generated.priceWithinBudget === true
+            && (generated.bidQualityScore || 0) >= 70;
+          if ((guardedBid || safeManualReview) && generated.priceWithinBudget === true) candidates.push(generated);
           else seen.add(item.url);
         } catch (error) {
           console.error(`inspect ${site} ${item.url}:`, error.message);
@@ -272,7 +277,12 @@ async function submitApproved(approval) {
         worker: false,
         body: { ...inspected, freelancerProfile: profile, preferredDomains: domains, capturedAt: new Date().toISOString() }
       });
-      if (fresh.decision !== "BID" || fresh.guardReady !== true || fresh.priceWithinBudget !== true) throw new Error("Fresh BID/Guard revalidation failed");
+      const guardedBid = fresh.decision === "BID" && fresh.guardReady === true;
+      const safeManualReview = fresh.decision === "MAYBE"
+        && fresh.domainGate === "allowed"
+        && fresh.priceWithinBudget === true
+        && (fresh.bidQualityScore || 0) >= 70;
+      if ((!guardedBid && !safeManualReview) || fresh.priceWithinBudget !== true) throw new Error("Fresh approval safety revalidation failed");
       if (new URL(fresh.url).origin !== new URL(approval.url).origin) throw new Error("Project origin changed after approval");
       if (comparableBudget(fresh.budget) !== comparableBudget(approval.project.budget)) throw new Error("Project budget changed after approval");
 

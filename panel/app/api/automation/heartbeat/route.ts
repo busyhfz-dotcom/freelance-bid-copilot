@@ -27,7 +27,8 @@ export async function POST(req: NextRequest) {
     alertState: decision.alertState
   };
   await saveWorkerHeartbeat(heartbeat);
-  if (decision.action === "alert") await sendWorkerAlert(heartbeat).catch(() => undefined);
-  if (decision.action === "recovered") await sendWorkerRecovery(heartbeat, decision.site).catch(() => undefined);
+  const workerAlertsEnabled = process.env.TELEGRAM_WORKER_ALERTS_ENABLED === "true";
+  if (workerAlertsEnabled && decision.action === "alert") await sendWorkerAlert(heartbeat).catch(() => undefined);
+  if (workerAlertsEnabled && decision.action === "recovered") await sendWorkerRecovery(heartbeat, decision.site).catch(() => undefined);
   return NextResponse.json({ ok: true });
 }

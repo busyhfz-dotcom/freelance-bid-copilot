@@ -22,6 +22,14 @@ export const DOMAIN_DEFS: Record<DomainKey, DomainDef> = {
 };
 
 export const DOMAIN_KEYS = Object.keys(DOMAIN_DEFS) as DomainKey[];
+const DOMAIN_ALIASES: Record<string, DomainKey> = {
+  "web/ui": "web_ui",
+  "web ui": "web_ui",
+  "web / ui ux": "web_ui",
+  "ui/ux": "web_ui",
+  "wordpress/cms": "wordpress",
+  "wordpress / cms": "wordpress"
+};
 const GENERIC_TOKENS = new Set(["طراحی", "design", "designer", "پروژه", "project", "انجام", "کار", "برای", "the", "and", "with", "یک", "ساخت", "ایجاد", "توسعه", "خدمات", "فروش", "حرفه", "حرفه ای", "نیاز", "مورد", "صفحه", "page", "سایت", "site", "وب", "web", "فروشگاه", "فروشگاهی", "اینترنتی"]);
 const DOMAIN_ADJACENCY: Record<string, number> = {
   "web_ui|wordpress": 0.82, "wordpress|web_ui": 0.82,
@@ -33,6 +41,11 @@ const DOMAIN_ADJACENCY: Record<string, number> = {
 
 function normalizeText(value = "") {
   return String(value || "").toLowerCase().replace(/[يى]/g, "ی").replace(/ك/g, "ک").replace(/[\u200c\u200f]/g, " ").replace(/[^\p{L}\p{N}+#./]+/gu, " ").replace(/\s+/g, " ").trim();
+}
+function normalizeDomainKey(value: unknown): DomainKey | "" {
+  if (typeof value !== "string") return "";
+  if (DOMAIN_KEYS.includes(value as DomainKey)) return value as DomainKey;
+  return DOMAIN_ALIASES[normalizeText(value).replace(/-/g, " ")] || "";
 }
 function phraseText(value = "") { return normalizeText(value).replace(/[./]+/g, " ").replace(/\s+/g, " ").trim(); }
 function hasPhrase(text: string, phrase: string) { return ` ${phraseText(text)} `.includes(` ${phraseText(phrase)} `); }
@@ -89,7 +102,7 @@ export function inferAllowedDomains(profile = "") {
 }
 function resolveAllowedDomains(profile = "", explicit: unknown = []) {
   const values = Array.isArray(explicit) ? explicit : [];
-  const valid = values.filter((key): key is DomainKey => typeof key === "string" && DOMAIN_KEYS.includes(key as DomainKey));
+  const valid = values.map(normalizeDomainKey).filter((key): key is DomainKey => Boolean(key));
   return valid.length ? [...new Set(valid)] : inferAllowedDomains(profile);
 }
 function alignment(projectKey: DomainKey | "", allowed: DomainKey[]) {
