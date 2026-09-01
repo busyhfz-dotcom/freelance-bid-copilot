@@ -144,7 +144,8 @@ test("hosted database uses a private RLS-enabled Supabase schema", () => {
   const schema = read("database/bid-copilot-schema.sql");
   const store = read("panel/lib/store.ts");
   assert.match(schema, /CREATE SCHEMA IF NOT EXISTS bid_copilot/);
-  assert.equal((schema.match(/ENABLE ROW LEVEL SECURITY/g) || []).length, 4);
+  assert.equal((schema.match(/ENABLE ROW LEVEL SECURITY/g) || []).length, 5);
+  assert.match(schema, /CREATE TABLE IF NOT EXISTS bid_copilot\.copilot_reports/);
   assert.match(schema, /REVOKE ALL ON SCHEMA bid_copilot FROM anon, authenticated/);
   assert.doesNotMatch(store, /(?:FROM|INTO|UPDATE) copilot_(?:projects|searches|bid_approvals|worker_state)/);
 });
@@ -165,6 +166,25 @@ test("dashboard exposes Worker health and Telegram approval queue", () => {
   assert.match(page, /\/api\/automation\/heartbeat/);
   assert.match(page, /\/api\/automation\/candidates/);
   assert.match(page, /TELEGRAM APPROVAL REQUIRED/);
+});
+
+test("reports persist scans and the complete Telegram decision lifecycle", () => {
+  const reportsRoute = read("panel/app/api/reports/route.ts");
+  const page = read("panel/app/page.tsx");
+  const worker = read("worker/src/index.mjs");
+  const candidates = read("panel/app/api/automation/candidates/route.ts");
+  const webhook = read("panel/app/api/telegram/webhook/route.ts");
+  const result = read("panel/app/api/automation/result/route.ts");
+  assert.match(reportsRoute, /isWorkerAuthorized/);
+  assert.match(reportsRoute, /listReports/);
+  assert.match(page, /ViewMode = "reports"/);
+  assert.match(page, /fetch\("\/api\/reports"/);
+  assert.match(page, /گزارشات زنده اسکن و تلگرام/);
+  assert.match(worker, /eventType: "scan_completed"/);
+  assert.match(candidates, /eventType: "approval_sent"/);
+  assert.match(webhook, /"approval_approved"/);
+  assert.match(webhook, /"approval_rejected"/);
+  assert.match(result, /eventType: "submission_result"/);
 });
 
 test("Worker storage-state credentials are explicitly excluded from source control", () => {
