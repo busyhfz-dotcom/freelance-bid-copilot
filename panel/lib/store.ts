@@ -3,9 +3,12 @@ import path from "node:path";
 import { Pool } from "pg";
 import type { ApprovalStatus, BidApprovalRecord, ProjectRecord, ReportRecord, SearchRecord, WorkerHeartbeat } from "./types";
 
+const defaultDataDir = process.env.VERCEL
+  ? path.join("/tmp", "bid-copilot")
+  : path.join(process.cwd(), ".data");
 const dataDir = process.env.COPILOT_DATA_DIR?.trim()
   ? path.resolve(process.env.COPILOT_DATA_DIR.trim())
-  : path.join(process.cwd(), ".data");
+  : defaultDataDir;
 const projectsFile = path.join(dataDir, "projects.json");
 const searchesFile = path.join(dataDir, "searches.json");
 const approvalsFile = path.join(dataDir, "approvals.json");
