@@ -1,7 +1,8 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { hashApprovalToken, parseTelegramDecision } from "@/lib/approval-policy";
-import { decideBidApproval } from "@/lib/store";
+import { createReport } from "@/lib/reports";
+import { decideBidApproval, saveReport } from "@/lib/store";
 import { answerCallback, markTelegramDecision } from "@/lib/telegram";
 
 export const runtime = "nodejs";
@@ -42,5 +43,20 @@ export async function POST(req: NextRequest) {
     answerCallback(String(callback.id), approved ? "تأیید شد؛ Worker فوراً ثبت را آغاز می‌کند." : "پیشنهاد رد شد."),
     markTelegramDecision(chatId, Number(callback.message.message_id), approved)
   ]);
+  await saveReport(createReport({
+    category: "telegram",
+    eventType: approved ? "approval_approved" : "approval_rejected",
+    level: approved ? "success" : "info",
+    title: approved ? "بید در تلگرام تأیید شد" : "بید در تلگرام رد شد",
+    message: approved
+      ? `پروژه «${decided.project.title}» تأیید شد و برای Worker در صف ثبت قرار گرفت.`
+      : `پروژه «${decided.project.title}» رد شد و بیدی ثبت نخواهد شد.`,
+    site: decided.site,
+    approvalId: decided.id,
+    projectId: decided.projectId,
+    projectTitle: decided.project.title,
+    status: decided.status,
+    metadata: { telegramMessageId: Number(callback.message.message_id) }
+  }));
   return NextResponse.json({ ok: true });
 }
