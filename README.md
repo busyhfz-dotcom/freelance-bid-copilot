@@ -1,4 +1,16 @@
-# Freelance Bid Copilot v0.5.1
+# Freelance Bid Copilot v0.6.0
+
+## v0.6.0 — Live reports and web-first operations
+
+- Makes «گزارشات» the default hosted-panel view and hides the Electron-only browser control on the web dashboard.
+- Persists every scan summary, Telegram approval message, approve/reject decision, Worker alert/recovery and bid result in the private `bid_copilot.copilot_reports` table.
+- Refreshes live operations every five seconds and shows Worker health, latest scan, Telegram activity and errors in one timeline.
+- Keeps marketplace browsing inside the always-on Railway Worker; web links open safely in a separate browser tab.
+- Filters sensitive metadata keys before persistence and excludes local `.data` files from source control.
+
+Validation: 83/83 tests, TypeScript, the production Next.js build, Worker syntax and authenticated Reports API smoke tests pass.
+
+---
 
 ## v0.5.1 — Private Supabase control plane
 
