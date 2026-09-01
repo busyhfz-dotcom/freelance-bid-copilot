@@ -1,10 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import type { BidApprovalRecord, ProjectPayload, ProjectRecord, SearchRecord, SearchResultItem, WorkerHeartbeat } from "@/lib/types";
+import type { BidApprovalRecord, ProjectPayload, ProjectRecord, ReportRecord, SearchRecord, SearchResultItem, WorkerHeartbeat } from "@/lib/types";
 
 type Marketplace = "kaya" | "ponisha";
-type ViewMode = "browser" | "history" | "projects" | "automation";
+type ViewMode = "reports" | "browser" | "history" | "projects" | "automation";
 type Notice = { kind: "success" | "error" | "info"; text: string } | null;
 
 const MARKETPLACES: Record<Marketplace, { label: string; url: string; short: string }> = {
@@ -65,10 +65,11 @@ export default function Page() {
   const [searches, setSearches] = useState<SearchRecord[]>([]);
   const [approvals, setApprovals] = useState<BidApprovalRecord[]>([]);
   const [workers, setWorkers] = useState<WorkerHeartbeat[]>([]);
+  const [reports, setReports] = useState<ReportRecord[]>([]);
   const [selectedProject, setSelectedProject] = useState<ProjectRecord | null>(null);
   const [selectedSearch, setSelectedSearch] = useState<SearchRecord | null>(null);
   const [inspected, setInspected] = useState<ProjectPayload | null>(null);
-  const [mode, setMode] = useState<ViewMode>("browser");
+  const [mode, setMode] = useState<ViewMode>("reports");
   const [busy, setBusy] = useState<string | null>(null);
   const [notice, setNotice] = useState<Notice>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -82,18 +83,19 @@ export default function Page() {
 
   const refreshData = useCallback(async () => {
     try {
-      const [projectResponse, searchResponse, approvalResponse, workerResponse] = await Promise.all([
+      const [projectResponse, searchResponse, approvalResponse, workerResponse, reportResponse] = await Promise.all([
         fetch("/api/projects", { headers, cache: "no-store" }),
         fetch("/api/searches", { headers, cache: "no-store" }),
         fetch("/api/automation/candidates", { headers, cache: "no-store" }),
-        fetch("/api/automation/heartbeat", { headers, cache: "no-store" })
+        fetch("/api/automation/heartbeat", { headers, cache: "no-store" }),
+        fetch("/api/reports", { headers, cache: "no-store" })
       ]);
-      if ([projectResponse, searchResponse, approvalResponse, workerResponse].some((response) => response.status === 401)) {
+      if ([projectResponse, searchResponse, approvalResponse, workerResponse, reportResponse].some((response) => response.status === 401)) {
         setNotice({ kind: "error", text: "کلید دسترسی پنل معتبر نیست." });
         return;
       }
-      const [projectData, searchData, approvalData, workerData] = await Promise.all([
-        projectResponse.json(), searchResponse.json(), approvalResponse.json(), workerResponse.json()
+      const [projectData, searchData, approvalData, workerData, reportData] = await Promise.all([
+        projectResponse.json(), searchResponse.json(), approvalResponse.json(), workerResponse.json(), reportResponse.json()
       ]);
       const nextProjects = projectData.projects || [];
       const nextSearches = searchData.searches || [];
@@ -101,6 +103,7 @@ export default function Page() {
       setSearches((current) => JSON.stringify(current) === JSON.stringify(nextSearches) ? current : nextSearches);
       setApprovals((current) => JSON.stringify(current) === JSON.stringify(approvalData.approvals || []) ? current : approvalData.approvals || []);
       setWorkers((current) => JSON.stringify(current) === JSON.stringify(workerData.workers || []) ? current : workerData.workers || []);
+      setReports((current) => JSON.stringify(current) === JSON.stringify(reportData.reports || []) ? current : reportData.reports || []);
       setSelectedProject((current) => current || nextProjects[0] || null);
       setSelectedSearch((current) => current || nextSearches[0] || null);
     } catch {
@@ -136,7 +139,7 @@ export default function Page() {
     const refreshWhenVisible = () => {
       if (document.visibilityState === "visible") void refreshData();
     };
-    const timer = window.setInterval(refreshWhenVisible, mode === "automation" ? AUTOMATION_REFRESH_INTERVAL : DATA_REFRESH_INTERVAL);
+    const timer = window.setInterval(refreshWhenVisible, mode === "automation" || mode === "reports" ? AUTOMATION_REFRESH_INTERVAL : DATA_REFRESH_INTERVAL);
     document.addEventListener("visibilitychange", refreshWhenVisible);
     return () => {
       window.clearInterval(timer);
@@ -535,6 +538,10 @@ export default function Page() {
   }
 
   function openResult(result: SearchResultItem) {
+    if (!desktop) {
+      window.open(result.url, "_blank", "noopener,noreferrer");
+      return;
+    }
     setMode("browser");
     setInspected(null);
     void navigateBrowser(result.url);
@@ -544,6 +551,9 @@ export default function Page() {
   const highValueCount = projects.filter((item) => (item.jobScore || 0) >= 70 && item.decision === "BID").length;
   const pendingApprovalCount = approvals.filter((item) => item.status === "pending" || item.status === "approved").length;
   const workerOnline = workers.some((worker) => Date.now() - new Date(worker.lastSeenAt).getTime() < 90_000);
+  const telegramReportCount = reports.filter((report) => report.category === "telegram").length;
+  const errorReportCount = reports.filter((report) => report.level === "error").length;
+  const latestScan = reports.find((report) => report.eventType === "scan_completed" || report.eventType === "scan_failed");
   const busyLabel = busy === "workflow" ? "Inspect، امتیازدهی و تولید بید…" : busy === "inspect" ? "در حال خواندن و تحلیل DOM…" : busy === "scan" ? "در حال استخراج پروژه‌های صفحه…" : busy === "search" ? "در حال اجرای جست‌وجو…" : busy === "generate" ? "در حال ساخت تصمیم و بید…" : busy === "fill" ? "در حال تکمیل فرم امن…" : "";
 
   return (
@@ -551,7 +561,8 @@ export default function Page() {
       <aside className="rail">
         <div className="brandMark">B<span>•</span></div>
         <nav aria-label="ناوبری اصلی">
-          <button className={mode === "browser" ? "active" : ""} onClick={() => setMode("browser")} title="مرورگر"><Icon>⌁</Icon><small>مرورگر</small></button>
+          <button className={mode === "reports" ? "active" : ""} onClick={() => setMode("reports")} title="گزارشات"><Icon>◉</Icon><small>گزارشات</small></button>
+          {desktop && <button className={mode === "browser" ? "active" : ""} onClick={() => setMode("browser")} title="مرورگر"><Icon>⌁</Icon><small>مرورگر</small></button>}
           <button className={mode === "history" ? "active" : ""} onClick={() => setMode("history")} title="جست‌وجوها"><Icon>⌕</Icon><small>جست‌وجو</small></button>
           <button className={mode === "projects" ? "active" : ""} onClick={() => setMode("projects")} title="پروژه‌ها"><Icon>▤</Icon><small>پروژه‌ها</small></button>
           <button className={mode === "automation" ? "active" : ""} onClick={() => setMode("automation")} title="اتوماسیون"><Icon>⚡</Icon><small>اتوماسیون</small></button>
@@ -561,7 +572,7 @@ export default function Page() {
 
       <section className="appSurface">
         <header className="appHeader">
-          <div className="titleBlock"><div className="productLine"><span className="pulse" /> BID COPILOT <b>WORKSPACE</b></div><h1>{mode === "browser" ? "مرورگر پروژه‌ها" : mode === "history" ? "تاریخچه جست‌وجو" : mode === "projects" ? "پروژه‌های تحلیل‌شده" : "صف تأیید و Worker آنلاین"}</h1></div>
+          <div className="titleBlock"><div className="productLine"><span className="pulse" /> BID COPILOT <b>WORKSPACE</b></div><h1>{mode === "reports" ? "گزارشات زنده اسکن و تلگرام" : mode === "browser" ? "مرورگر پروژه‌ها" : mode === "history" ? "تاریخچه جست‌وجو" : mode === "projects" ? "پروژه‌های تحلیل‌شده" : "صف تأیید و Worker آنلاین"}</h1></div>
           <div className="headerMetrics"><div><span>PROJECTS</span><strong>{projects.length}</strong></div><div><span>APPROVALS</span><strong>{pendingApprovalCount}</strong></div><div><span>WORKER</span><strong className={workerOnline ? "green" : ""}>{workerOnline ? "ON" : "OFF"}</strong></div></div>
           <div className="runtimeGroup"><div className={`runtimePill ${desktop ? "online" : "web"}`}><span />{desktop ? "Desktop bridge" : "Web dashboard"}</div><button className="workspaceRefresh" onClick={refreshWorkspace} title="Refresh کامل Workspace">↻ Refresh app</button></div>
         </header>
@@ -591,6 +602,39 @@ export default function Page() {
                   {busyLabel && <div className="browserActivity" dir="rtl"><span /><strong>{busyLabel}</strong><button onClick={() => void stopBrowser()}>توقف</button></div>}
                 </div>
               </div>
+
+            {mode === "reports" && (
+              <div className="dataView reportsView">
+                <div className="dataHeader"><div><span className="overline">LIVE OPERATIONS JOURNAL</span><h2>گزارشات</h2></div><button onClick={refreshData}>↻ همگام‌سازی</button></div>
+                <div className="reportsBody">
+                  <section className="reportSummary">
+                    <article className={workerOnline ? "healthy" : "critical"}><span>WORKER</span><strong>{workerOnline ? "آنلاین" : "قطع"}</strong><small>{workers[0]?.message || "هنوز Heartbeat دریافت نشده"}</small></article>
+                    <article><span>LAST SCAN</span><strong>{latestScan ? relativeTime(latestScan.createdAt) : "—"}</strong><small>{latestScan?.message || "هنوز اسکن ثبت نشده"}</small></article>
+                    <article><span>TELEGRAM</span><strong>{telegramReportCount}</strong><small>پیام و تصمیم ثبت‌شده</small></article>
+                    <article className={errorReportCount ? "critical" : "healthy"}><span>ERRORS</span><strong>{errorReportCount}</strong><small>در {reports.length} رویداد اخیر</small></article>
+                  </section>
+                  <section className="reportTimeline">
+                    {reports.length === 0 && <div className="zeroState">هنوز گزارشی ثبت نشده است؛ اولین اسکن Worker این بخش را پر می‌کند.</div>}
+                    {reports.map((report) => <article key={report.id} className={`reportEntry ${report.level}`}>
+                      <div className="reportMarker"><i /></div>
+                      <div className="reportContent">
+                        <div className="reportTitle"><span className={`reportCategory ${report.category}`}>{report.category}</span><strong>{report.title}</strong><time>{relativeTime(report.createdAt)}</time></div>
+                        <p>{report.message}</p>
+                        <div className="reportMeta">
+                          {report.site && <span>{report.site}</span>}
+                          {report.status && <span>{report.status}</span>}
+                          {report.projectTitle && <button onClick={() => {
+                            const project = projects.find((item) => item.id === report.projectId || item.title === report.projectTitle);
+                            if (project) setSelectedProject(project);
+                          }}>{report.projectTitle}</button>}
+                          <code>{new Date(report.createdAt).toLocaleString("fa-IR")}</code>
+                        </div>
+                      </div>
+                    </article>)}
+                  </section>
+                </div>
+              </div>
+            )}
 
             {mode === "history" && (
               <div className="dataView">
@@ -662,7 +706,7 @@ export default function Page() {
           </aside>
         </div>
 
-        <footer className="statusBar" dir="ltr"><span><i className={workerOnline ? "online" : ""} /> WORKER {workerOnline ? "ONLINE" : "OFFLINE"}</span><span>API {accessKey ? "KEYED" : "LOCKED"}</span><span>QUEUE {pendingApprovalCount}</span><span className="spacer" /><span>TELEGRAM APPROVAL REQUIRED</span><span>FRESH GUARD BEFORE SUBMIT</span><span>v0.5.1</span></footer>
+        <footer className="statusBar" dir="ltr"><span><i className={workerOnline ? "online" : ""} /> WORKER {workerOnline ? "ONLINE" : "OFFLINE"}</span><span>API {accessKey ? "KEYED" : "LOCKED"}</span><span>QUEUE {pendingApprovalCount}</span><span>REPORTS {reports.length}</span><span className="spacer" /><span>TELEGRAM APPROVAL REQUIRED</span><span>FRESH GUARD BEFORE SUBMIT</span><span>v0.6.0</span></footer>
       </section>
 
       {notice && <div className={`toast ${notice.kind}`}>{notice.text}</div>}
