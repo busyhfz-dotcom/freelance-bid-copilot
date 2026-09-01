@@ -123,3 +123,23 @@ export type WorkerAlertEntry = {
   lastSentAt: string;
   recoveredAt?: string;
 };
+
+export type ReportCategory = "scan" | "telegram" | "worker" | "bid" | "system";
+export type ReportLevel = "info" | "success" | "warning" | "error";
+
+export type ReportRecord = {
+  id: string;
+  category: ReportCategory;
+  eventType: string;
+  level: ReportLevel;
+  title: string;
+  message: string;
+  createdAt: string;
+  site?: string;
+  workerId?: string;
+  approvalId?: string;
+  projectId?: string;
+  projectTitle?: string;
+  status?: string;
+  metadata?: Record<string, string | number | boolean | null>;
+};
