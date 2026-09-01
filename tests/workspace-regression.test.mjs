@@ -110,6 +110,8 @@ test("Windows launcher defaults to a cached production build", () => {
 
 test("local fallback uses memory caching, serialized writes, and atomic rename", () => {
   const store = read("panel/lib/store.ts");
+  assert.match(store, /process\.env\.VERCEL/);
+  assert.match(store, /path\.join\("\/tmp", "bid-copilot"\)/);
   assert.match(store, /bidCopilotLocalCache/);
   assert.match(store, /bidCopilotLocalWrites/);
   assert.match(store, /mutateJson/);

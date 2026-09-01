@@ -1,6 +1,6 @@
 importScripts("domain-engine.js", "guard-policy.js");
 
-const ENGINE_VERSION = "0.5.1";
+const ENGINE_VERSION = "0.6.0";
 
 const DEFAULTS = {
   panelUrl: "http://localhost:3000",

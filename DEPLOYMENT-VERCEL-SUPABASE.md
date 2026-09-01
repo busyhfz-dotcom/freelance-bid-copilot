@@ -48,7 +48,10 @@ TELEGRAM_ALLOWED_USER_ID=...
 TELEGRAM_WEBHOOK_SECRET=...
 AUTOMATION_MIN_SCORE=72
 AUTOMATION_MAX_PENDING=10
+AUTOMATION_DAILY_TELEGRAM_LIMIT=10
 APPROVAL_TTL_MINUTES=30
+WORKER_ALERT_COOLDOWN_MINUTES=30
+TELEGRAM_WORKER_ALERTS_ENABLED=false
 ```
 
 پس از Deploy، webhook را در PowerShell ثبت کن. مقادیر Secret را فقط در همان ترمینال خودت وارد کن:
@@ -109,10 +112,10 @@ KAYA_LIST_URL=https://kaya.ir/projects
 PONISHA_LIST_URL=https://ponisha.ir/search/projects
 KAYA_STORAGE_STATE_PATH=/data/auth/kaya.storage-state.json
 PONISHA_STORAGE_STATE_PATH=/data/auth/ponisha.storage-state.json
-SCAN_INTERVAL_SECONDS=60
-APPROVAL_POLL_SECONDS=2
-INSPECT_LIMIT_PER_SITE=15
-TOP_BIDS_PER_CYCLE=5
+SCAN_INTERVAL_SECONDS=300
+APPROVAL_POLL_SECONDS=15
+INSPECT_LIMIT_PER_SITE=5
+TOP_BIDS_PER_CYCLE=1
 ```
 
 فایل‌های نشست را فقط به مسیرهای `/data/auth/` در Volume خصوصی منتقل کن. اگر انتقال مستقیم فایل در پلن Railway در دسترس نیست، محتوای Base64 هر فایل را موقتاً به‌صورت Secret با نام‌های `KAYA_STORAGE_STATE_B64` و `PONISHA_STORAGE_STATE_B64` قرار بده؛ پس از اولین Start موفق و نوشته‌شدن فایل‌ها روی Volume، این دو Variable را حذف کن.
@@ -121,7 +124,8 @@ TOP_BIDS_PER_CYCLE=5
 
 ## رفتار عملیاتی و ایمنی
 
-- هر ۶۰ ثانیه هر دو سایت بررسی می‌شوند و در هر چرخه، ۵ تا ۱۰ مورد برترِ موجود برای تأیید ارسال می‌شوند.
+- هر پنج دقیقه هر دو سایت بررسی می‌شوند؛ بهترین مورد تازهٔ هر چرخه ارسال می‌شود و سقف تلگرام بین ۵ تا ۱۰ مورد در روز قابل تنظیم است.
+- همهٔ خلاصه‌های اسکن، پیام‌های تلگرام، تصمیم‌های تأیید/رد و نتیجهٔ ثبت بید در بخش «گزارشات» پنل نگهداری می‌شوند.
 - متن بید کوتاه، مستقیم، پروژه‌محور و بدون بخش‌های تکراری AI ساخته می‌شود.
 - تأیید تلگرام یک‌بارمصرف و پیش‌فرض ۳۰ دقیقه معتبر است.
 - Worker پس از تأیید، صفحه را دوباره Inspect و BID/Guard، بودجه و فیلدهای قفل‌شده را کنترل می‌کند.

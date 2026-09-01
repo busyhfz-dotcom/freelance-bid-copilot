@@ -3,6 +3,7 @@
 
 # Next.js and build output
 **/.next/
+**/.data/
 **/out/
 **/dist/
 **/coverage/

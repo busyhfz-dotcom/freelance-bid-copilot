@@ -1,8 +1,25 @@
 import type { BidApprovalRecord, WorkerHeartbeat } from "./types";
 import { callbackData } from "./approval-policy";
 
+export type TelegramDelivery = {
+  chatId: string;
+  messageId: number;
+  text: string;
+};
+
 function escapeHtml(value: unknown) {
   return String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+export function plainTelegramText(value: string) {
+  return value
+    .replace(/<a\s+[^>]*href="[^"]*"[^>]*>(.*?)<\/a>/gi, "$1")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&amp;/g, "&")
+    .trim();
 }
 
 async function telegram<T>(method: string, payload: Record<string, unknown>): Promise<T> {
@@ -39,7 +56,7 @@ export async function sendApprovalRequest(record: BidApprovalRecord, token: stri
     `اعتبار تأیید تا: ${escapeHtml(new Date(record.expiresAt).toLocaleString("fa-IR"))}`,
     `<a href="${escapeHtml(project.url)}">بازکردن آگهی</a>`
   ].join("\n");
-  return telegram<{ message_id: number; chat: { id: number | string } }>("sendMessage", {
+  const result = await telegram<{ message_id: number; chat: { id: number | string } }>("sendMessage", {
     chat_id: chatId,
     text,
     parse_mode: "HTML",
@@ -51,6 +68,7 @@ export async function sendApprovalRequest(record: BidApprovalRecord, token: stri
       ]]
     }
   });
+  return { chatId: String(result.chat.id), messageId: result.message_id, text: plainTelegramText(text) } satisfies TelegramDelivery;
 }
 
 export async function answerCallback(callbackQueryId: string, text: string, showAlert = false) {
@@ -67,35 +85,41 @@ export async function markTelegramDecision(chatId: string, messageId: number, ap
 
 export async function sendWorkerAlert(heartbeat: WorkerHeartbeat) {
   const chatId = process.env.TELEGRAM_CHAT_ID?.trim();
-  if (!chatId) return;
-  await telegram("sendMessage", {
+  if (!chatId) return null;
+  const text = `⚠️ Worker ${escapeHtml(heartbeat.workerId)}: ${escapeHtml(heartbeat.message || heartbeat.status)}`;
+  const result = await telegram<{ message_id: number; chat: { id: number | string } }>("sendMessage", {
     chat_id: chatId,
-    text: `⚠️ Worker ${escapeHtml(heartbeat.workerId)}: ${escapeHtml(heartbeat.message || heartbeat.status)}`,
+    text,
     parse_mode: "HTML"
   });
+  return { chatId: String(result.chat.id), messageId: result.message_id, text: plainTelegramText(text) } satisfies TelegramDelivery;
 }
 
 export async function sendWorkerRecovery(heartbeat: WorkerHeartbeat, site = "") {
   const chatId = process.env.TELEGRAM_CHAT_ID?.trim();
-  if (!chatId) return;
+  if (!chatId) return null;
   const target = site ? `${escapeHtml(site)}: session ready; scanning resumed` : "connection recovered";
-  await telegram("sendMessage", {
+  const text = `✅ Worker ${escapeHtml(heartbeat.workerId)}: ${target}`;
+  const result = await telegram<{ message_id: number; chat: { id: number | string } }>("sendMessage", {
     chat_id: chatId,
-    text: `✅ Worker ${escapeHtml(heartbeat.workerId)}: ${target}`,
+    text,
     parse_mode: "HTML"
   });
+  return { chatId: String(result.chat.id), messageId: result.message_id, text: plainTelegramText(text) } satisfies TelegramDelivery;
 }
 
 export async function sendSubmissionResult(record: BidApprovalRecord) {
   const chatId = process.env.TELEGRAM_CHAT_ID?.trim();
-  if (!chatId) return;
+  if (!chatId) return null;
   const successful = record.status === "submitted";
-  await telegram("sendMessage", {
+  const text = successful
+    ? `✅ بید «${escapeHtml(record.title)}» ثبت و نتیجه تأیید شد.`
+    : `⚠️ ثبت بید «${escapeHtml(record.title)}» متوقف شد.\n${escapeHtml(record.lastError || "نیاز به بررسی دستی")}`;
+  const result = await telegram<{ message_id: number; chat: { id: number | string } }>("sendMessage", {
     chat_id: chatId,
-    text: successful
-      ? `✅ بید «${escapeHtml(record.title)}» ثبت و نتیجه تأیید شد.`
-      : `⚠️ ثبت بید «${escapeHtml(record.title)}» متوقف شد.\n${escapeHtml(record.lastError || "نیاز به بررسی دستی")}`,
+    text,
     parse_mode: "HTML",
     disable_web_page_preview: true
   });
+  return { chatId: String(result.chat.id), messageId: result.message_id, text: plainTelegramText(text) } satisfies TelegramDelivery;
 }

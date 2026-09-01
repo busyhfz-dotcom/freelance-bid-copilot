@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isAuthorized, isWorkerAuthorized, readsRequireAuthorization } from "@/lib/auth";
 import { approvalId, canQueueForApproval, createApprovalToken } from "@/lib/approval-policy";
-import { attachTelegramMessage, discardUnsentApproval, listBidApprovals, queueBidApproval } from "@/lib/store";
+import { createReport } from "@/lib/reports";
+import { attachTelegramMessage, discardUnsentApproval, listBidApprovals, queueBidApproval, saveReport } from "@/lib/store";
 import { sendApprovalRequest } from "@/lib/telegram";
 import type { BidApprovalRecord, ProjectRecord } from "@/lib/types";
 import { countApprovalsForDay } from "@/lib/daily-approval-policy";
@@ -46,10 +47,41 @@ export async function POST(req: NextRequest) {
   if (!queued.created) return NextResponse.json({ approval: queued.record, created: false });
   try {
     const message = await sendApprovalRequest(record, token);
-    const attached = await attachTelegramMessage(record.id, String(message.chat.id), message.message_id);
+    const attached = await attachTelegramMessage(record.id, message.chatId, message.messageId);
+    await saveReport(createReport({
+      category: "telegram",
+      eventType: "approval_sent",
+      level: "success",
+      title: `ارسال آگهی برای تأیید: ${record.title}`,
+      message: message.text,
+      site: record.site,
+      approvalId: record.id,
+      projectId: record.projectId,
+      projectTitle: record.title,
+      status: "pending",
+      metadata: {
+        telegramMessageId: message.messageId,
+        score: record.score,
+        budget: record.project.budget || "نامشخص",
+        recommendedPrice: record.project.recommendedPrice || "نامشخص"
+      }
+    }));
     return NextResponse.json({ approval: attached || record, created: true }, { status: 201 });
   } catch (error) {
+    const message = error instanceof Error ? error.message : "Telegram delivery failed";
+    await saveReport(createReport({
+      category: "telegram",
+      eventType: "approval_delivery_failed",
+      level: "error",
+      title: `ارسال تلگرام ناموفق: ${record.title}`,
+      message,
+      site: record.site,
+      approvalId: record.id,
+      projectId: record.projectId,
+      projectTitle: record.title,
+      status: "failed"
+    })).catch(() => undefined);
     await discardUnsentApproval(record.id);
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Telegram delivery failed" }, { status: 502 });
+    return NextResponse.json({ error: message }, { status: 502 });
   }
 }
