@@ -6,7 +6,7 @@ import { chromium } from "playwright";
 import { normalizeProjectInspection } from "./project-normalizer.mjs";
 import { blockedRetryDelayMs, describeWorkerError } from "./runtime-policy.mjs";
 
-const VERSION = "0.5.1";
+const VERSION = "0.6.0";
 const root = path.resolve(import.meta.dirname, "../..");
 const dataDir = path.resolve(process.env.BROWSER_DATA_DIR || "/data");
 const panelUrl = String(process.env.PANEL_URL || "").replace(/\/$/, "");
@@ -108,6 +108,19 @@ async function heartbeat(nextStatus = status, message = statusMessage, site = ""
   await api("/api/automation/heartbeat", {
     body: { workerId, status, message, currentSite: site, lastSeenAt: new Date().toISOString(), lastScanAt, sessionState, version: VERSION }
   }).catch((error) => console.error("heartbeat:", error.message));
+}
+
+async function report(input) {
+  return api("/api/reports", {
+    body: {
+      ...input,
+      workerId,
+      createdAt: new Date().toISOString()
+    }
+  }).catch((error) => {
+    console.error("report:", error.message);
+    return null;
+  });
 }
 
 function hasBlock(text, url) {
@@ -229,19 +242,41 @@ async function scanSite(site) {
 
 async function scanCycle() {
   const candidates = [];
+  let queuedCount = 0;
+  let queueFailures = 0;
   for (const site of Object.keys(markets)) candidates.push(...await scanSite(site));
   const best = candidates.sort((a, b) => (b.jobScore || 0) - (a.jobScore || 0) || (b.matchScore || 0) - (a.matchScore || 0)).slice(0, topPerCycle);
   for (const project of best) {
     try {
-      await api("/api/automation/candidates", { body: project });
+      const result = await api("/api/automation/candidates", { body: project });
+      if (result.created) queuedCount += 1;
       seen.add(project.url);
     } catch (error) {
+      queueFailures += 1;
       console.error("queue candidate:", error.message);
     }
   }
   lastScanAt = new Date().toISOString();
   await atomicWrite(seenFile, JSON.stringify([...seen].slice(-5000)));
-  await heartbeat("idle", `Scan complete; ${best.length} approval request(s) queued`);
+  await heartbeat("idle", `Scan complete; ${queuedCount} approval request(s) queued`);
+  await report({
+    category: "scan",
+    eventType: "scan_completed",
+    level: queueFailures ? "warning" : "success",
+    title: "اسکن دوره‌ای تکمیل شد",
+    message: queuedCount
+      ? `${queuedCount} آگهی برتر برای تأیید به تلگرام ارسال شد.`
+      : `${candidates.length} آگهی مناسب بررسی شد؛ مورد تازه‌ای برای تأیید ارسال نشد.`,
+    status: "idle",
+    metadata: {
+      candidateCount: candidates.length,
+      selectedCount: best.length,
+      queuedCount,
+      failureCount: queueFailures,
+      kayaSession: sessionState.kaya,
+      ponishaSession: sessionState.ponisha
+    }
+  });
 }
 
 async function guardedScanCycle() {
@@ -347,8 +382,31 @@ async function main() {
   adapterBundle = `${await fs.readFile(path.join(root, "extension/adapter-core.js"), "utf8")}\n${await fs.readFile(path.join(root, "extension/adapters.js"), "utf8")}`;
   browser = await chromium.launch({ headless: true });
   await heartbeat("idle", "Worker is online");
-  void guardedScanCycle().catch(async (error) => { const message = describeWorkerError(error); console.error("scan:", message); await heartbeat("error", message); });
-  const scanTimer = setInterval(() => void guardedScanCycle().catch(async (error) => { const message = describeWorkerError(error); console.error("scan:", message); await heartbeat("error", message); }), scanInterval);
+  await report({
+    category: "worker",
+    eventType: "worker_started",
+    level: "success",
+    title: "Worker آنلاین شد",
+    message: "مرورگر خودکار Worker اجرا شد و اسکن دوره‌ای کایا و پونیشا فعال است.",
+    status: "idle",
+    metadata: { version: VERSION, scanIntervalSeconds: scanInterval / 1000 }
+  });
+  const handleScanError = async (error) => {
+    const message = describeWorkerError(error);
+    console.error("scan:", message);
+    await heartbeat("error", message);
+    await report({
+      category: "scan",
+      eventType: "scan_failed",
+      level: "error",
+      title: "اسکن دوره‌ای ناموفق بود",
+      message,
+      status: "error",
+      metadata: { kayaSession: sessionState.kaya, ponishaSession: sessionState.ponisha }
+    });
+  };
+  void guardedScanCycle().catch(handleScanError);
+  const scanTimer = setInterval(() => void guardedScanCycle().catch(handleScanError), scanInterval);
   const approvalTimer = setInterval(() => void approvalCycle(), approvalPoll);
   const heartbeatTimer = setInterval(() => void heartbeat(), 25_000);
   process.once("SIGTERM", () => shutdown([scanTimer, approvalTimer, heartbeatTimer]));
