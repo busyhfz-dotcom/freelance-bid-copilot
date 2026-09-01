@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { Pool } from "pg";
-import type { ApprovalStatus, BidApprovalRecord, ProjectRecord, SearchRecord, WorkerHeartbeat } from "./types";
+import type { ApprovalStatus, BidApprovalRecord, ProjectRecord, ReportRecord, SearchRecord, WorkerHeartbeat } from "./types";
 
 const dataDir = process.env.COPILOT_DATA_DIR?.trim()
   ? path.resolve(process.env.COPILOT_DATA_DIR.trim())
@@ -10,8 +10,9 @@ const projectsFile = path.join(dataDir, "projects.json");
 const searchesFile = path.join(dataDir, "searches.json");
 const approvalsFile = path.join(dataDir, "approvals.json");
 const workersFile = path.join(dataDir, "workers.json");
+const reportsFile = path.join(dataDir, "reports.json");
 
-type LocalItems = ProjectRecord | SearchRecord | BidApprovalRecord | WorkerHeartbeat;
+type LocalItems = ProjectRecord | SearchRecord | BidApprovalRecord | WorkerHeartbeat | ReportRecord;
 type DatabaseGlobal = typeof globalThis & {
   bidCopilotPool?: Pool;
   bidCopilotLocalCache?: Map<string, LocalItems[]>;
@@ -89,9 +90,25 @@ async function ensureSchema() {
           updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
       `);
+      await db.query(`
+        CREATE TABLE IF NOT EXISTS bid_copilot.copilot_reports (
+          id TEXT PRIMARY KEY,
+          category TEXT NOT NULL,
+          event_type TEXT NOT NULL,
+          level TEXT NOT NULL,
+          site TEXT,
+          created_at TIMESTAMPTZ NOT NULL,
+          payload JSONB NOT NULL,
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `);
       await db.query("CREATE INDEX IF NOT EXISTS copilot_projects_captured_idx ON bid_copilot.copilot_projects (captured_at DESC)");
       await db.query("CREATE INDEX IF NOT EXISTS copilot_searches_searched_idx ON bid_copilot.copilot_searches (searched_at DESC)");
       await db.query("CREATE INDEX IF NOT EXISTS copilot_approvals_status_idx ON bid_copilot.copilot_bid_approvals (status, score DESC, created_at ASC)");
+      await db.query("CREATE INDEX IF NOT EXISTS copilot_reports_created_idx ON bid_copilot.copilot_reports (created_at DESC)");
+      await db.query("CREATE INDEX IF NOT EXISTS copilot_reports_category_idx ON bid_copilot.copilot_reports (category, created_at DESC)");
+      await db.query("ALTER TABLE bid_copilot.copilot_reports ENABLE ROW LEVEL SECURITY");
+      await db.query("REVOKE ALL ON TABLE bid_copilot.copilot_reports FROM anon, authenticated");
     })().catch((error) => {
       schemaReady = null;
       throw error;
@@ -441,4 +458,45 @@ export async function listWorkerHeartbeats() {
     return result.rows.map((row) => row.payload);
   }
   return readJson<WorkerHeartbeat>(workersFile);
+}
+
+export async function saveReport(report: ReportRecord) {
+  const db = pool();
+  if (db) {
+    await ensureSchema();
+    await db.query(
+      `INSERT INTO bid_copilot.copilot_reports
+         (id, category, event_type, level, site, created_at, payload, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, NOW())
+       ON CONFLICT (id) DO UPDATE SET
+         category = EXCLUDED.category,
+         event_type = EXCLUDED.event_type,
+         level = EXCLUDED.level,
+         site = EXCLUDED.site,
+         created_at = EXCLUDED.created_at,
+         payload = EXCLUDED.payload,
+         updated_at = NOW()`,
+      [report.id, report.category, report.eventType, report.level, report.site || null, report.createdAt, JSON.stringify(report)]
+    );
+    return report;
+  }
+  await mutateJson<ReportRecord>(reportsFile, (items) => [
+    report,
+    ...items.filter((item) => item.id !== report.id)
+  ]);
+  return report;
+}
+
+export async function listReports(limit = 250) {
+  const safeLimit = Math.min(500, Math.max(1, limit));
+  const db = pool();
+  if (db) {
+    await ensureSchema();
+    const result = await db.query<{ payload: ReportRecord }>(
+      "SELECT payload FROM bid_copilot.copilot_reports ORDER BY created_at DESC LIMIT $1",
+      [safeLimit]
+    );
+    return result.rows.map((row) => row.payload);
+  }
+  return (await readJson<ReportRecord>(reportsFile)).slice(0, safeLimit);
 }
