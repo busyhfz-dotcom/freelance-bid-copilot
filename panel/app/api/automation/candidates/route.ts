@@ -3,7 +3,7 @@ import { isAuthorized, isWorkerAuthorized, readsRequireAuthorization } from "@/l
 import { approvalGuardReasons, approvalId, canQueueForApproval, createApprovalToken } from "@/lib/approval-policy";
 import { createReport } from "@/lib/reports";
 import { attachTelegramMessage, discardUnsentApproval, listBidApprovals, queueBidApproval, saveReport } from "@/lib/store";
-import { sendApprovalRequest } from "@/lib/telegram";
+import { sendProjectApprovalRequest } from "@/lib/telegram";
 import type { BidApprovalRecord, ProjectRecord } from "@/lib/types";
 import { countApprovalsForDay } from "@/lib/daily-approval-policy";
 
@@ -32,7 +32,7 @@ export async function POST(req: NextRequest) {
   if (countApprovalsForDay(approvals) >= dailyLimit) {
     return NextResponse.json({ error: "Daily Telegram approval limit reached" }, { status: 429 });
   }
-  if (approvals.filter((item) => item.status === "pending" || item.status === "approved").length >= pendingLimit) {
+  if (approvals.filter((item) => ["project_pending", "bid_pending", "approved"].includes(item.status)).length >= pendingLimit) {
     return NextResponse.json({ error: "Approval queue is full" }, { status: 429 });
   }
   const { token, hash } = createApprovalToken();
@@ -40,13 +40,13 @@ export async function POST(req: NextRequest) {
   const expiresAt = new Date(now.getTime() + integerEnv("APPROVAL_TTL_MINUTES", 30, 5, 180) * 60_000).toISOString();
   const record: BidApprovalRecord = {
     id: approvalId(project), projectId: project.id, url: project.url, site: project.site, title: project.title,
-    status: "pending", score: project.jobScore || 0, createdAt: now.toISOString(), expiresAt,
+    status: "project_pending", score: project.jobScore || 0, createdAt: now.toISOString(), expiresAt,
     updatedAt: now.toISOString(), approvalTokenHash: hash, attempts: 0, project
   };
   const queued = await queueBidApproval(record);
   if (!queued.created) return NextResponse.json({ approval: queued.record, created: false });
   try {
-    const message = await sendApprovalRequest(record, token);
+    const message = await sendProjectApprovalRequest(record, token);
     const attached = await attachTelegramMessage(record.id, message.chatId, message.messageId);
     await saveReport(createReport({
       category: "telegram",
@@ -58,7 +58,7 @@ export async function POST(req: NextRequest) {
       approvalId: record.id,
       projectId: record.projectId,
       projectTitle: record.title,
-      status: "pending",
+      status: "project_pending",
       metadata: {
         telegramMessageId: message.messageId,
         score: record.score,

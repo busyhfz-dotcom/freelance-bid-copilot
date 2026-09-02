@@ -1,4 +1,4 @@
-const ENGINE_VERSION = "0.6.1";
+const ENGINE_VERSION = "0.6.2";
 const $ = (id) => document.getElementById(id);
 function send(type, payload) { return chrome.runtime.sendMessage({ type, payload }); }
 function status(t, k = "") { $("status").textContent = t; $("status").className = `status ${k}`; }

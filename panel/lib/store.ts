@@ -308,31 +308,126 @@ export async function attachTelegramMessage(id: string, chatId: string, messageI
   return updated;
 }
 
+export async function attachBidTelegramMessage(id: string, chatId: string, messageId: number) {
+  const db = pool();
+  if (db) {
+    await ensureSchema();
+    const current = await db.query<{ payload: BidApprovalRecord }>("SELECT payload FROM bid_copilot.copilot_bid_approvals WHERE id = $1 LIMIT 1", [id]);
+    const record = current.rows[0]?.payload;
+    if (!record || record.status !== "bid_pending") return null;
+    const next = { ...record, telegramChatId: chatId, bidTelegramMessageId: messageId, updatedAt: new Date().toISOString() };
+    await db.query(
+      "UPDATE bid_copilot.copilot_bid_approvals SET payload = $2::jsonb, updated_at = NOW() WHERE id = $1 AND status = 'bid_pending'",
+      [id, JSON.stringify(next)]
+    );
+    return next;
+  }
+  let updated: BidApprovalRecord | null = null;
+  await mutateJson<BidApprovalRecord>(approvalsFile, (items) => items.map((item) => {
+    if (item.id !== id || item.status !== "bid_pending") return item;
+    updated = { ...item, telegramChatId: chatId, bidTelegramMessageId: messageId, updatedAt: new Date().toISOString() };
+    return updated;
+  }));
+  return updated;
+}
+
 export async function discardUnsentApproval(id: string) {
   const db = pool();
   if (db) {
     await ensureSchema();
-    await db.query("DELETE FROM bid_copilot.copilot_bid_approvals WHERE id = $1 AND status = 'pending' AND telegram_message_id IS NULL", [id]);
+    await db.query("DELETE FROM bid_copilot.copilot_bid_approvals WHERE id = $1 AND status = 'project_pending' AND telegram_message_id IS NULL", [id]);
     return;
   }
-  await mutateJson<BidApprovalRecord>(approvalsFile, (items) => items.filter((item) => !(item.id === id && item.status === "pending" && !item.telegramMessageId)));
+  await mutateJson<BidApprovalRecord>(approvalsFile, (items) => items.filter((item) => !(item.id === id && item.status === "project_pending" && !item.telegramMessageId)));
 }
 
 export async function listBidApprovals(limit = 100) {
   const db = pool();
   if (db) {
     await ensureSchema();
-    await db.query("UPDATE bid_copilot.copilot_bid_approvals SET status = 'expired', payload = jsonb_set(payload, '{status}', '\"expired\"'), updated_at = NOW() WHERE status IN ('pending', 'approved') AND expires_at <= NOW()");
+    await db.query("UPDATE bid_copilot.copilot_bid_approvals SET status = 'expired', payload = jsonb_set(payload, '{status}', '\"expired\"'), updated_at = NOW() WHERE status IN ('pending', 'project_pending', 'bid_pending', 'approved') AND expires_at <= NOW()");
     const result = await db.query<{ payload: BidApprovalRecord }>("SELECT payload FROM bid_copilot.copilot_bid_approvals ORDER BY created_at DESC LIMIT $1", [Math.min(250, Math.max(1, limit))]);
     return result.rows.map((row) => row.payload);
   }
   const now = Date.now();
   const items = await mutateJson<BidApprovalRecord>(approvalsFile, (current) => current.map((item) =>
-    (item.status === "pending" || item.status === "approved") && new Date(item.expiresAt).getTime() <= now
+    (["project_pending", "bid_pending", "approved"] as ApprovalStatus[]).includes(item.status) && new Date(item.expiresAt).getTime() <= now
       ? { ...item, status: "expired", updatedAt: new Date().toISOString() }
       : item
   ));
   return items.slice(0, limit);
+}
+
+export async function decideProjectApproval(id: string, decision: "approve" | "reject", tokenHash: string, chatId: string, renewedExpiresAt: string) {
+  const now = new Date().toISOString();
+  const nextStatus: ApprovalStatus = decision === "approve" ? "bid_pending" : "rejected";
+  const db = pool();
+  if (db) {
+    await ensureSchema();
+    const current = await db.query<{ payload: BidApprovalRecord }>(
+      `SELECT payload FROM bid_copilot.copilot_bid_approvals
+       WHERE id = $1 AND status = 'project_pending' AND approval_token_hash = $2 AND expires_at > NOW()
+         AND (telegram_chat_id IS NULL OR telegram_chat_id = $3)
+       LIMIT 1`,
+      [id, tokenHash, chatId]
+    );
+    const record = current.rows[0]?.payload;
+    if (!record) return null;
+    const next: BidApprovalRecord = {
+      ...record,
+      status: nextStatus,
+      expiresAt: decision === "approve" ? renewedExpiresAt : record.expiresAt,
+      updatedAt: now,
+      ...(decision === "approve" ? { projectApprovedAt: now } : { rejectedAt: now })
+    };
+    const updated = await db.query(
+      `UPDATE bid_copilot.copilot_bid_approvals SET status = $2, expires_at = $3, payload = $4::jsonb, updated_at = NOW()
+       WHERE id = $1 AND status = 'project_pending' AND approval_token_hash = $5 AND expires_at > NOW()`,
+      [id, nextStatus, next.expiresAt, JSON.stringify(next), tokenHash]
+    );
+    return updated.rowCount === 1 ? next : null;
+  }
+  let decided: BidApprovalRecord | null = null;
+  await mutateJson<BidApprovalRecord>(approvalsFile, (items) => items.map((item) => {
+    if (item.id !== id || item.status !== "project_pending" || item.approvalTokenHash !== tokenHash || new Date(item.expiresAt).getTime() <= Date.now()) return item;
+    if (item.telegramChatId && item.telegramChatId !== chatId) return item;
+    decided = {
+      ...item,
+      status: nextStatus,
+      expiresAt: decision === "approve" ? renewedExpiresAt : item.expiresAt,
+      updatedAt: now,
+      ...(decision === "approve" ? { projectApprovedAt: now } : { rejectedAt: now })
+    };
+    return decided;
+  }));
+  return decided;
+}
+
+export async function revertBidApprovalToProjectPending(id: string, tokenHash: string) {
+  const now = new Date().toISOString();
+  const db = pool();
+  if (db) {
+    await ensureSchema();
+    const current = await db.query<{ payload: BidApprovalRecord }>(
+      "SELECT payload FROM bid_copilot.copilot_bid_approvals WHERE id = $1 AND status = 'bid_pending' AND approval_token_hash = $2 LIMIT 1",
+      [id, tokenHash]
+    );
+    const record = current.rows[0]?.payload;
+    if (!record) return null;
+    const next: BidApprovalRecord = { ...record, status: "project_pending", updatedAt: now, projectApprovedAt: undefined };
+    await db.query(
+      "UPDATE bid_copilot.copilot_bid_approvals SET status = 'project_pending', payload = $2::jsonb, updated_at = NOW() WHERE id = $1 AND status = 'bid_pending'",
+      [id, JSON.stringify(next)]
+    );
+    return next;
+  }
+  let reverted: BidApprovalRecord | null = null;
+  await mutateJson<BidApprovalRecord>(approvalsFile, (items) => items.map((item) => {
+    if (item.id !== id || item.status !== "bid_pending" || item.approvalTokenHash !== tokenHash) return item;
+    reverted = { ...item, status: "project_pending", updatedAt: now, projectApprovedAt: undefined };
+    return reverted;
+  }));
+  return reverted;
 }
 
 export async function decideBidApproval(id: string, decision: "approve" | "reject", tokenHash: string, chatId: string) {
@@ -343,9 +438,8 @@ export async function decideBidApproval(id: string, decision: "approve" | "rejec
     await ensureSchema();
     const current = await db.query<{ payload: BidApprovalRecord }>(
       `SELECT payload FROM bid_copilot.copilot_bid_approvals
-       WHERE id = $1 AND status = 'pending' AND approval_token_hash = $2 AND expires_at > NOW()
-         AND (telegram_chat_id IS NULL OR telegram_chat_id = $3)
-       LIMIT 1`,
+       WHERE id = $1 AND status = 'bid_pending' AND approval_token_hash = $2 AND expires_at > NOW()
+         AND telegram_chat_id = $3 LIMIT 1`,
       [id, tokenHash, chatId]
     );
     const record = current.rows[0]?.payload;
@@ -354,20 +448,25 @@ export async function decideBidApproval(id: string, decision: "approve" | "rejec
       ...record,
       status: nextStatus,
       updatedAt: now,
-      ...(decision === "approve" ? { approvedAt: now } : { rejectedAt: now })
+      ...(decision === "approve" ? { approvedAt: now, bidApprovedAt: now } : { rejectedAt: now })
     };
     const updated = await db.query(
       `UPDATE bid_copilot.copilot_bid_approvals SET status = $2, payload = $3::jsonb, updated_at = NOW()
-       WHERE id = $1 AND status = 'pending' AND approval_token_hash = $4 AND expires_at > NOW()`,
+       WHERE id = $1 AND status = 'bid_pending' AND approval_token_hash = $4 AND expires_at > NOW()`,
       [id, nextStatus, JSON.stringify(next), tokenHash]
     );
     return updated.rowCount === 1 ? next : null;
   }
   let decided: BidApprovalRecord | null = null;
   await mutateJson<BidApprovalRecord>(approvalsFile, (items) => items.map((item) => {
-    if (item.id !== id || item.status !== "pending" || item.approvalTokenHash !== tokenHash || new Date(item.expiresAt).getTime() <= Date.now()) return item;
-    if (item.telegramChatId && item.telegramChatId !== chatId) return item;
-    decided = { ...item, status: nextStatus, updatedAt: now, ...(decision === "approve" ? { approvedAt: now } : { rejectedAt: now }) };
+    if (item.id !== id || item.status !== "bid_pending" || item.approvalTokenHash !== tokenHash || new Date(item.expiresAt).getTime() <= Date.now()) return item;
+    if (item.telegramChatId !== chatId) return item;
+    decided = {
+      ...item,
+      status: nextStatus,
+      updatedAt: now,
+      ...(decision === "approve" ? { approvedAt: now, bidApprovedAt: now } : { rejectedAt: now })
+    };
     return decided;
   }));
   return decided;

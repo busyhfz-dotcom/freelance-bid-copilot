@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Freelance Bid Copilot",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "description": "Hard Domain Gate project ranking and guarded bidding: explicit work domains, conservative domain inference, competition-aware pricing, Quick Bid Queue, duplicate guard and locked proposal filling.",
   "permissions": [
     "activeTab",

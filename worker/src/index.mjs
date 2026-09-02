@@ -7,7 +7,7 @@ import { normalizeProjectInspection } from "./project-normalizer.mjs";
 import { blockedRetryDelayMs, describeWorkerError } from "./runtime-policy.mjs";
 import { budgetAllowsApprovedPrice } from "./budget-policy.mjs";
 
-const VERSION = "0.6.1";
+const VERSION = "0.6.2";
 const root = path.resolve(import.meta.dirname, "../..");
 const dataDir = path.resolve(process.env.BROWSER_DATA_DIR || "/data");
 const panelUrl = String(process.env.PANEL_URL || "").replace(/\/$/, "");

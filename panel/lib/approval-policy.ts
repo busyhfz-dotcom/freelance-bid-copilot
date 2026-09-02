@@ -1,7 +1,7 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import type { BidApprovalRecord, ProjectRecord } from "./types";
 
-export type TelegramDecision = "approve" | "reject";
+export type TelegramDecision = "project_approve" | "project_reject" | "bid_approve" | "bid_reject";
 
 export function createApprovalToken() {
   const token = randomBytes(12).toString("base64url");
@@ -47,15 +47,27 @@ export function isApprovalFresh(record: BidApprovalRecord, now = Date.now()) {
 }
 
 export function parseTelegramDecision(value: string) {
-  const match = /^(a|r):([a-f0-9]{16}):([A-Za-z0-9_-]{16})$/.exec(value || "");
+  const match = /^(pa|pr|ba|br):([a-f0-9]{16}):([A-Za-z0-9_-]{16})$/.exec(value || "");
   if (!match) return null;
+  const decisions: Record<string, TelegramDecision> = {
+    pa: "project_approve",
+    pr: "project_reject",
+    ba: "bid_approve",
+    br: "bid_reject"
+  };
   return {
-    decision: (match[1] === "a" ? "approve" : "reject") as TelegramDecision,
+    decision: decisions[match[1]],
     approvalId: match[2],
     token: match[3]
   };
 }
 
 export function callbackData(decision: TelegramDecision, id: string, token: string) {
-  return `${decision === "approve" ? "a" : "r"}:${id}:${token}`;
+  const codes: Record<TelegramDecision, string> = {
+    project_approve: "pa",
+    project_reject: "pr",
+    bid_approve: "ba",
+    bid_reject: "br"
+  };
+  return `${codes[decision]}:${id}:${token}`;
 }
