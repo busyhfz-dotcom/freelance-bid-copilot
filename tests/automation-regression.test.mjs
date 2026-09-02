@@ -18,6 +18,21 @@ test("Telegram approval is short-lived, one-time, and bound to an authorized acc
   assert.match(webhook, /decideBidApproval/);
 });
 
+test("Telegram uses separate project and final bid approvals", () => {
+  const policy = read("panel/lib/approval-policy.ts");
+  const telegram = read("panel/lib/telegram.ts");
+  const webhook = read("panel/app/api/telegram/webhook/route.ts");
+  const store = read("panel/lib/store.ts");
+  assert.match(policy, /project_approve/);
+  assert.match(policy, /bid_approve/);
+  assert.match(telegram, /تأیید آگهی/);
+  assert.match(telegram, /تأیید نهایی و ارسال/);
+  assert.match(webhook, /decideProjectApproval/);
+  assert.match(webhook, /sendBidApprovalRequest/);
+  assert.match(store, /status = 'bid_pending'/);
+  assert.match(store, /WHERE status = 'approved'/);
+});
+
 test("approval queue requires a guarded BID inside budget", () => {
   const policy = read("panel/lib/approval-policy.ts");
   assert.match(policy, /project\.decision === "BID"/);
@@ -188,7 +203,7 @@ test("dashboard exposes Worker health and Telegram approval queue", () => {
   assert.match(page, /mode === "automation"/);
   assert.match(page, /\/api\/automation\/heartbeat/);
   assert.match(page, /\/api\/automation\/candidates/);
-  assert.match(page, /TELEGRAM APPROVAL REQUIRED/);
+  assert.match(page, /TWO-STAGE TELEGRAM APPROVAL/);
 });
 
 test("reports persist scans and the complete Telegram decision lifecycle", () => {
@@ -205,8 +220,9 @@ test("reports persist scans and the complete Telegram decision lifecycle", () =>
   assert.match(page, /گزارشات زنده اسکن و تلگرام/);
   assert.match(worker, /eventType: "scan_completed"/);
   assert.match(candidates, /eventType: "approval_sent"/);
-  assert.match(webhook, /"approval_approved"/);
-  assert.match(webhook, /"approval_rejected"/);
+  assert.match(webhook, /"bid_review_sent"/);
+  assert.match(webhook, /"bid_approved"/);
+  assert.match(webhook, /"project_rejected"/);
   assert.match(result, /eventType: "submission_result"/);
 });
 

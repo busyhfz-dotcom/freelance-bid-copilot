@@ -586,7 +586,7 @@ export default function Page() {
 
   const activeResultCount = selectedSearch?.results.length || 0;
   const highValueCount = projects.filter((item) => (item.jobScore || 0) >= 70 && item.decision === "BID").length;
-  const pendingApprovalCount = approvals.filter((item) => item.status === "pending" || item.status === "approved").length;
+  const pendingApprovalCount = approvals.filter((item) => ["project_pending", "bid_pending", "approved"].includes(item.status)).length;
   const workerOnline = workers.some((worker) => Date.now() - new Date(worker.lastSeenAt).getTime() < 90_000);
   const telegramReportCount = reports.filter((report) => report.category === "telegram").length;
   const errorReportCount = reports.filter((report) => report.level === "error").length;
@@ -744,7 +744,7 @@ export default function Page() {
           </aside>
         </div>
 
-        <footer className="statusBar" dir="ltr"><span><i className={workerOnline ? "online" : ""} /> WORKER {workerOnline ? "ONLINE" : "OFFLINE"}</span><span>API {authorized ? "READY" : "LOCKED"}</span><span>QUEUE {pendingApprovalCount}</span><span>REPORTS {reports.length}</span><span className="spacer" /><span>TELEGRAM APPROVAL REQUIRED</span><span>FRESH GUARD BEFORE SUBMIT</span><span>v0.6.1</span></footer>
+        <footer className="statusBar" dir="ltr"><span><i className={workerOnline ? "online" : ""} /> WORKER {workerOnline ? "ONLINE" : "OFFLINE"}</span><span>API {authorized ? "READY" : "LOCKED"}</span><span>QUEUE {pendingApprovalCount}</span><span>REPORTS {reports.length}</span><span className="spacer" /><span>TWO-STAGE TELEGRAM APPROVAL</span><span>FRESH GUARD BEFORE SUBMIT</span><span>v0.6.2</span></footer>
       </section>
 
       {notice && <div className={`toast ${notice.kind}`}>{notice.text}</div>}

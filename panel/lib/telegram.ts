@@ -36,24 +36,20 @@ async function telegram<T>(method: string, payload: Record<string, unknown>): Pr
   return data.result;
 }
 
-export async function sendApprovalRequest(record: BidApprovalRecord, token: string) {
+export async function sendProjectApprovalRequest(record: BidApprovalRecord, token: string) {
   const chatId = process.env.TELEGRAM_CHAT_ID?.trim();
   if (!chatId) throw new Error("TELEGRAM_CHAT_ID is not configured");
   const project = record.project;
-  const reviewLabel = project.decision === "MAYBE" ? "نیازمند بررسی شما" : "آمادهٔ تأیید";
-  const proposal = escapeHtml(project.bid).slice(0, 1800);
   const text = [
     "<b>بهترین آگهی این چرخه</b>",
     "",
     `<b>${escapeHtml(project.title)}</b>`,
     `${escapeHtml(project.site)} · امتیاز ${project.jobScore ?? "—"} · تطابق ${project.matchScore ?? "—"}`,
     `بودجه: ${escapeHtml(project.budget || "نامشخص")}`,
-    `بید: <b>${escapeHtml(project.recommendedPrice)}</b> · ${escapeHtml(project.recommendedDuration)} روز`,
-    `وضعیت: ${reviewLabel}`,
+    `حوزه: ${escapeHtml(project.primaryDomain || "نامشخص")}`,
+    `دلیل انتخاب: ${escapeHtml(project.matchReason || project.decisionReason || "امتیاز و تطابق مناسب")}`,
     "",
-    proposal,
-    "",
-    `اعتبار تأیید تا: ${escapeHtml(new Date(record.expiresAt).toLocaleString("fa-IR"))}`,
+    "در صورت تأیید این آگهی، متن و مبلغ بید در یک پیام جدا برای تأیید نهایی ارسال می‌شود.",
     `<a href="${escapeHtml(project.url)}">بازکردن آگهی</a>`
   ].join("\n");
   const result = await telegram<{ message_id: number; chat: { id: number | string } }>("sendMessage", {
@@ -63,8 +59,39 @@ export async function sendApprovalRequest(record: BidApprovalRecord, token: stri
     disable_web_page_preview: true,
     reply_markup: {
       inline_keyboard: [[
-        { text: "✅ تأیید و ثبت سریع", callback_data: callbackData("approve", record.id, token) },
-        { text: "❌ رد", callback_data: callbackData("reject", record.id, token) }
+        { text: "✅ تأیید آگهی", callback_data: callbackData("project_approve", record.id, token) },
+        { text: "❌ رد آگهی", callback_data: callbackData("project_reject", record.id, token) }
+      ]]
+    }
+  });
+  return { chatId: String(result.chat.id), messageId: result.message_id, text: plainTelegramText(text) } satisfies TelegramDelivery;
+}
+
+export async function sendBidApprovalRequest(record: BidApprovalRecord, token: string) {
+  const chatId = process.env.TELEGRAM_CHAT_ID?.trim();
+  if (!chatId) throw new Error("TELEGRAM_CHAT_ID is not configured");
+  const project = record.project;
+  const proposal = escapeHtml(project.bid).slice(0, 2600);
+  const text = [
+    "<b>بید آمادهٔ تأیید نهایی</b>",
+    "",
+    `<b>${escapeHtml(project.title)}</b>`,
+    `مبلغ: <b>${escapeHtml(project.recommendedPrice)}</b> · زمان: ${escapeHtml(project.recommendedDuration)} روز`,
+    "",
+    proposal,
+    "",
+    "این بید فقط پس از تأیید نهایی شما برای کارفرما ارسال می‌شود.",
+    `<a href="${escapeHtml(project.url)}">بازکردن آگهی</a>`
+  ].join("\n");
+  const result = await telegram<{ message_id: number; chat: { id: number | string } }>("sendMessage", {
+    chat_id: chatId,
+    text,
+    parse_mode: "HTML",
+    disable_web_page_preview: true,
+    reply_markup: {
+      inline_keyboard: [[
+        { text: "✅ تأیید نهایی و ارسال", callback_data: callbackData("bid_approve", record.id, token) },
+        { text: "❌ رد بید", callback_data: callbackData("bid_reject", record.id, token) }
       ]]
     }
   });

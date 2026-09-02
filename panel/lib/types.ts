@@ -71,7 +71,8 @@ export type SearchRecord = {
 };
 
 export type ApprovalStatus =
-  | "pending"
+  | "project_pending"
+  | "bid_pending"
   | "approved"
   | "rejected"
   | "expired"
@@ -97,6 +98,9 @@ export type BidApprovalRecord = {
   claimedAt?: string;
   telegramChatId?: string;
   telegramMessageId?: number;
+  bidTelegramMessageId?: number;
+  projectApprovedAt?: string;
+  bidApprovedAt?: string;
   approvalTokenHash: string;
   attempts: number;
   lastError?: string;

@@ -1,4 +1,8 @@
-# Freelance Bid Copilot v0.6.1
+# Freelance Bid Copilot v0.6.2
+
+## v0.6.2 — Two-stage Telegram approval
+
+Project selection and final bid submission now require two separate Telegram approvals. The Worker cannot claim a bid until the final bid message is approved.
 
 ## v0.6.1 — Restored panel, extension and approved-bid flow
 
