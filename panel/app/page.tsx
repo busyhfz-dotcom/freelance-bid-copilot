@@ -73,13 +73,17 @@ export default function Page() {
   const [busy, setBusy] = useState<string | null>(null);
   const [notice, setNotice] = useState<Notice>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [authorized, setAuthorized] = useState(false);
   const [intelCollapsed, setIntelCollapsed] = useState(false);
-  const [accessKey, setAccessKey] = useState("change-me");
+  const [accessKey, setAccessKey] = useState("");
   const [panelUrl, setPanelUrl] = useState("");
   const [profile, setProfile] = useState("");
   const [domains, setDomains] = useState("Web/UI, WordPress/CMS");
 
-  const headers = useMemo(() => ({ "Content-Type": "application/json", "X-Copilot-Key": accessKey }), [accessKey]);
+  const headers = useMemo<Record<string, string>>(() => ({
+    "Content-Type": "application/json",
+    ...(accessKey ? { "X-Copilot-Key": accessKey } : {})
+  }), [accessKey]);
 
   const refreshData = useCallback(async () => {
     try {
@@ -91,7 +95,9 @@ export default function Page() {
         fetch("/api/reports", { headers, cache: "no-store" })
       ]);
       if ([projectResponse, searchResponse, approvalResponse, workerResponse, reportResponse].some((response) => response.status === 401)) {
-        setNotice({ kind: "error", text: "کلید دسترسی پنل معتبر نیست." });
+        setAuthorized(false);
+        setSettingsOpen(true);
+        setNotice({ kind: "error", text: "پنل قفل است؛ کلید دسترسی را یک‌بار وارد کن." });
         return;
       }
       const [projectData, searchData, approvalData, workerData, reportData] = await Promise.all([
@@ -104,6 +110,7 @@ export default function Page() {
       setApprovals((current) => JSON.stringify(current) === JSON.stringify(approvalData.approvals || []) ? current : approvalData.approvals || []);
       setWorkers((current) => JSON.stringify(current) === JSON.stringify(workerData.workers || []) ? current : workerData.workers || []);
       setReports((current) => JSON.stringify(current) === JSON.stringify(reportData.reports || []) ? current : reportData.reports || []);
+      setAuthorized(true);
       setSelectedProject((current) => current || nextProjects[0] || null);
       setSelectedSearch((current) => current || nextSearches[0] || null);
     } catch {
@@ -112,10 +119,10 @@ export default function Page() {
   }, [headers]);
 
   useEffect(() => {
-    const savedKey = localStorage.getItem("bid-copilot:key");
+    let cancelled = false;
+    const savedKey = localStorage.getItem("bid-copilot:key") || "";
     const savedProfile = localStorage.getItem("bid-copilot:profile");
     const savedDomains = localStorage.getItem("bid-copilot:domains");
-    if (savedKey) setAccessKey(savedKey);
     if (savedProfile) setProfile(savedProfile);
     if (savedDomains) setDomains(savedDomains);
     const bridge = window.bidCopilotDesktop;
@@ -126,16 +133,32 @@ export default function Page() {
         setBrowserStatus("مرورگر امن آماده است");
       }).catch(() => setBrowserStatus("پل دسکتاپ در دسترس نیست"));
     }
-    setConfigReady(true);
+    void (async () => {
+      try {
+        const response = savedKey
+          ? await fetch("/api/session", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key: savedKey }) })
+          : await fetch("/api/session", { cache: "no-store" });
+        if (cancelled) return;
+        if (response.ok) {
+          localStorage.removeItem("bid-copilot:key");
+          setAuthorized(true);
+        } else {
+          setSettingsOpen(true);
+        }
+      } finally {
+        if (!cancelled) setConfigReady(true);
+      }
+    })();
+    return () => { cancelled = true; };
   }, []);
 
   useEffect(() => {
-    if (!configReady) return;
+    if (!configReady || !authorized) return;
     void refreshData();
-  }, [configReady, refreshData]);
+  }, [authorized, configReady, refreshData]);
 
   useEffect(() => {
-    if (!configReady || mode === "browser") return;
+    if (!configReady || !authorized || mode === "browser") return;
     const refreshWhenVisible = () => {
       if (document.visibilityState === "visible") void refreshData();
     };
@@ -145,7 +168,7 @@ export default function Page() {
       window.clearInterval(timer);
       document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
-  }, [configReady, mode, refreshData]);
+  }, [authorized, configReady, mode, refreshData]);
 
   useEffect(() => {
     if (!desktop || !webviewRef.current) return;
@@ -526,15 +549,29 @@ export default function Page() {
   }
 
   async function saveSettings() {
-    localStorage.setItem("bid-copilot:key", accessKey);
+    if (!authorized || accessKey) {
+      const response = await fetch("/api/session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key: accessKey })
+      });
+      if (!response.ok) {
+        setAuthorized(false);
+        setNotice({ kind: "error", text: "کلید دسترسی صحیح نیست؛ تنظیمات ذخیره نشد." });
+        return;
+      }
+      setAuthorized(true);
+      setAccessKey("");
+      localStorage.removeItem("bid-copilot:key");
+    }
     localStorage.setItem("bid-copilot:profile", profile);
     localStorage.setItem("bid-copilot:domains", domains);
     if (desktop && panelUrl && window.bidCopilotDesktop) {
       await window.bidCopilotDesktop.setPanelUrl(panelUrl);
     }
     setSettingsOpen(false);
-    setNotice({ kind: "success", text: "تنظیمات ذخیره شد." });
-    refreshData();
+    setNotice({ kind: "success", text: "اتصال امن پنل برقرار و تنظیمات ذخیره شد." });
+    void refreshData();
   }
 
   function openResult(result: SearchResultItem) {
@@ -614,7 +651,8 @@ export default function Page() {
                     <article className={errorReportCount ? "critical" : "healthy"}><span>ERRORS</span><strong>{errorReportCount}</strong><small>در {reports.length} رویداد اخیر</small></article>
                   </section>
                   <section className="reportTimeline">
-                    {reports.length === 0 && <div className="zeroState">هنوز گزارشی ثبت نشده است؛ اولین اسکن Worker این بخش را پر می‌کند.</div>}
+                    {!authorized && <div className="zeroState">پنل قفل است. از تنظیمات، COPILOT_KEY را یک‌بار وارد کن تا گزارش‌های ثبت‌شده نمایش داده شوند.</div>}
+                    {authorized && reports.length === 0 && <div className="zeroState">هنوز گزارشی ثبت نشده است؛ اولین اسکن Worker این بخش را پر می‌کند.</div>}
                     {reports.map((report) => <article key={report.id} className={`reportEntry ${report.level}`}>
                       <div className="reportMarker"><i /></div>
                       <div className="reportContent">
@@ -706,11 +744,11 @@ export default function Page() {
           </aside>
         </div>
 
-        <footer className="statusBar" dir="ltr"><span><i className={workerOnline ? "online" : ""} /> WORKER {workerOnline ? "ONLINE" : "OFFLINE"}</span><span>API {accessKey ? "KEYED" : "LOCKED"}</span><span>QUEUE {pendingApprovalCount}</span><span>REPORTS {reports.length}</span><span className="spacer" /><span>TELEGRAM APPROVAL REQUIRED</span><span>FRESH GUARD BEFORE SUBMIT</span><span>v0.6.0</span></footer>
+        <footer className="statusBar" dir="ltr"><span><i className={workerOnline ? "online" : ""} /> WORKER {workerOnline ? "ONLINE" : "OFFLINE"}</span><span>API {authorized ? "READY" : "LOCKED"}</span><span>QUEUE {pendingApprovalCount}</span><span>REPORTS {reports.length}</span><span className="spacer" /><span>TELEGRAM APPROVAL REQUIRED</span><span>FRESH GUARD BEFORE SUBMIT</span><span>v0.6.1</span></footer>
       </section>
 
       {notice && <div className={`toast ${notice.kind}`}>{notice.text}</div>}
-      {settingsOpen && <div className="modalBackdrop" onMouseDown={(event) => event.target === event.currentTarget && setSettingsOpen(false)}><section className="settingsModal"><div className="modalHead"><div><span className="overline">WORKSPACE CONFIG</span><h2>تنظیمات اتصال و پروفایل</h2></div><button onClick={() => setSettingsOpen(false)}>×</button></div><label>کلید دسترسی API<input type="password" value={accessKey} onChange={(event) => setAccessKey(event.target.value)} placeholder="COPILOT_KEY" /></label><label>آدرس پنل روی دامنه<input dir="ltr" value={panelUrl} onChange={(event) => setPanelUrl(event.target.value)} placeholder="https://panel.example.com" /></label><label>پروفایل فریلنسر<textarea value={profile} onChange={(event) => setProfile(event.target.value)} placeholder="مهارت‌ها، سابقه و نوع پروژه‌های مطلوب…" /></label><label>حوزه‌های مجاز Hard Domain Gate<input dir="ltr" value={domains} onChange={(event) => setDomains(event.target.value)} placeholder="Web/UI, WordPress/CMS" /></label><p>در هاست، دیتابیس و کلیدها Secret سرور هستند. نشست Electron روی سیستم و نشست Worker فقط در Volume خصوصی Worker می‌ماند؛ Cookie وارد API یا دیتابیس نمی‌شود.</p><button className="saveSettings" onClick={saveSettings}>ذخیره تنظیمات</button></section></div>}
+      {settingsOpen && <div className="modalBackdrop" onMouseDown={(event) => event.target === event.currentTarget && authorized && setSettingsOpen(false)}><section className="settingsModal"><div className="modalHead"><div><span className="overline">WORKSPACE CONFIG</span><h2>{authorized ? "تنظیمات اتصال و پروفایل" : "ورود امن به پنل"}</h2></div>{authorized && <button onClick={() => setSettingsOpen(false)}>×</button>}</div><label>کلید دسترسی API<input type="password" value={accessKey} onChange={(event) => setAccessKey(event.target.value)} placeholder={authorized ? "برای تعویض کلید، مقدار جدید را وارد کن" : "COPILOT_KEY"} autoComplete="current-password" /></label><label>آدرس پنل روی دامنه<input dir="ltr" value={panelUrl} onChange={(event) => setPanelUrl(event.target.value)} placeholder="https://www.freelancerpanel.ir" /></label><label>پروفایل فریلنسر<textarea value={profile} onChange={(event) => setProfile(event.target.value)} placeholder="مهارت‌ها، سابقه و نوع پروژه‌های مطلوب…" /></label><label>حوزه‌های مجاز Hard Domain Gate<input dir="ltr" value={domains} onChange={(event) => setDomains(event.target.value)} placeholder="Web/UI, WordPress/CMS" /></label><p>کلید فقط برای ساخت نشست HttpOnly ارسال می‌شود و دیگر داخل localStorage مرورگر نگه‌داری نمی‌شود. Cookie سایت‌های فریلنسری هرگز وارد پنل یا دیتابیس نمی‌شود.</p><button className="saveSettings" onClick={saveSettings}>{authorized ? "ذخیره تنظیمات" : "اتصال و نمایش گزارش‌ها"}</button></section></div>}
     </main>
   );
 }

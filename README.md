@@ -1,4 +1,16 @@
-# Freelance Bid Copilot v0.6.0
+# Freelance Bid Copilot v0.6.1
+
+## v0.6.1 — Restored panel, extension and approved-bid flow
+
+- Replaces the hosted panel's misleading empty state with an explicit secure sign-in and an HttpOnly session; `COPILOT_KEY` is no longer retained in browser `localStorage`.
+- Connects the extension to `freelancerpanel.ir` by default, adds the required production host permissions and verifies both the panel URL and key before saving.
+- Enables guarded submit after the extension's explicit Approve action while retaining the domain, score, budget, quality, duplicate and form-completeness gates.
+- Compares the approved price numerically with the freshly inspected marketplace budget range, so equivalent fixed/range wording no longer aborts an approved submission.
+- Filters Worker candidates below `AUTOMATION_MIN_SCORE` before enqueueing and returns concrete guard reasons for rejected candidates.
+
+Validation: 89/89 tests and Worker/extension JavaScript syntax checks pass. The production Next.js build is verified by the deployment preview before merge.
+
+---
 
 ## v0.6.0 — Live reports and web-first operations
 

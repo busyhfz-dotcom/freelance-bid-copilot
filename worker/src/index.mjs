@@ -5,8 +5,9 @@ import process from "node:process";
 import { chromium } from "playwright";
 import { normalizeProjectInspection } from "./project-normalizer.mjs";
 import { blockedRetryDelayMs, describeWorkerError } from "./runtime-policy.mjs";
+import { budgetAllowsApprovedPrice } from "./budget-policy.mjs";
 
-const VERSION = "0.6.0";
+const VERSION = "0.6.1";
 const root = path.resolve(import.meta.dirname, "../..");
 const dataDir = path.resolve(process.env.BROWSER_DATA_DIR || "/data");
 const panelUrl = String(process.env.PANEL_URL || "").replace(/\/$/, "");
@@ -19,6 +20,7 @@ const scanInterval = clamp(process.env.SCAN_INTERVAL_SECONDS, 300, 300, 3600) * 
 const approvalPoll = clamp(process.env.APPROVAL_POLL_SECONDS, 15, 15, 60) * 1000;
 const inspectLimit = clamp(process.env.INSPECT_LIMIT_PER_SITE, 5, 1, 5);
 const topPerCycle = clamp(process.env.TOP_BIDS_PER_CYCLE, 1, 1, 1);
+const automationMinScore = clamp(process.env.AUTOMATION_MIN_SCORE, 72, 65, 95);
 const blockedSiteRetry = blockedRetryDelayMs(process.env.BLOCKED_SITE_RETRY_MINUTES);
 const port = clamp(process.env.PORT, 8080, 1, 65535);
 
@@ -223,7 +225,7 @@ async function scanSite(site) {
             && generated.domainGate === "allowed"
             && generated.priceWithinBudget === true
             && (generated.bidQualityScore || 0) >= 70;
-          if ((guardedBid || safeManualReview) && generated.priceWithinBudget === true) candidates.push(generated);
+          if ((guardedBid || safeManualReview) && generated.priceWithinBudget === true && (generated.jobScore || 0) >= automationMinScore) candidates.push(generated);
           else seen.add(item.url);
         } catch (error) {
           console.error(`inspect ${site} ${item.url}:`, error.message);
@@ -285,10 +287,6 @@ async function guardedScanCycle() {
   try { await scanCycle(); } finally { scanBusy = false; }
 }
 
-function comparableBudget(value) {
-  return String(value || "").replace(/[\s,٬]/g, "").replace(/[۰-۹]/g, (digit) => String("۰۱۲۳۴۵۶۷۸۹".indexOf(digit))).toLowerCase();
-}
-
 async function submitApproved(approval) {
   const site = String(approval.site || "").toLowerCase();
   if (!markets[site]) throw new Error("Unsupported marketplace in approval");
@@ -319,7 +317,7 @@ async function submitApproved(approval) {
         && (fresh.bidQualityScore || 0) >= 70;
       if ((!guardedBid && !safeManualReview) || fresh.priceWithinBudget !== true) throw new Error("Fresh approval safety revalidation failed");
       if (new URL(fresh.url).origin !== new URL(approval.url).origin) throw new Error("Project origin changed after approval");
-      if (comparableBudget(fresh.budget) !== comparableBudget(approval.project.budget)) throw new Error("Project budget changed after approval");
+      if (!budgetAllowsApprovedPrice(fresh.budget, approval.project.recommendedPrice)) throw new Error("Approved price is outside the current project budget");
 
       const opened = await page.evaluate(() => window.BidCopilotAdapter.openProposalForm());
       if (!opened?.ok) throw new Error(opened?.reason || "Proposal form could not be opened");

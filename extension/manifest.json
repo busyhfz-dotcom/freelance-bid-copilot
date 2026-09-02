@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Freelance Bid Copilot",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Hard Domain Gate project ranking and guarded bidding: explicit work domains, conservative domain inference, competition-aware pricing, Quick Bid Queue, duplicate guard and locked proposal filling.",
   "permissions": [
     "activeTab",
@@ -10,6 +10,8 @@
   ],
   "host_permissions": [
     "http://localhost:3000/*",
+    "https://freelancerpanel.ir/*",
+    "https://www.freelancerpanel.ir/*",
     "https://*.kaya.ir/*",
     "https://kaya.ir/*",
     "https://*.ponisha.ir/*",

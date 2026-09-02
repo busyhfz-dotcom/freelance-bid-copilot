@@ -1,4 +1,4 @@
-const ENGINE_VERSION = "0.6.0";
+const ENGINE_VERSION = "0.6.1";
 const $ = (id) => document.getElementById(id);
 function send(type, payload) { return chrome.runtime.sendMessage({ type, payload }); }
 function status(t, k = "") { $("status").textContent = t; $("status").className = `status ${k}`; }
@@ -130,5 +130,5 @@ $("inspect").onclick = () => inspect();
 $("generate").onclick = () => action("COPILOT_GENERATE", (r) => `تحلیل آماده شد • Job ${r.result?.jobScore ?? "—"}% • Quality ${r.result?.bidQualityScore ?? "—"}%`);
 $("approve").onclick = () => action("COPILOT_APPROVE_FILL", (r) => r.submitted ? "بید با گاردهای ایمنی ارسال شد." : r.autoBlocked?.length ? `فرم پر شد؛ Auto-submit متوقف شد: ${r.autoBlocked.join(" | ")}` : "فرم پر شد؛ ارسال نهایی با خودت است.");
 $("reset").onclick = () => action("COPILOT_RESET_GUARD", () => "گارد پروژه فعلی ریست شد.");
-chrome.storage.sync.get({ autoSubmit: false }, (s) => { $("submitSuffix").textContent = s.autoSubmit ? "→ Safe Submit" : ""; });
+chrome.storage.sync.get({ autoSubmit: true }, (s) => { $("submitSuffix").textContent = s.autoSubmit ? "→ Safe Submit" : ""; });
 (async () => { await loadQueue(); await inspect(); })();

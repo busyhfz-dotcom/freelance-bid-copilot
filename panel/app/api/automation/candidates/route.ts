@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isAuthorized, isWorkerAuthorized, readsRequireAuthorization } from "@/lib/auth";
-import { approvalId, canQueueForApproval, createApprovalToken } from "@/lib/approval-policy";
+import { approvalGuardReasons, approvalId, canQueueForApproval, createApprovalToken } from "@/lib/approval-policy";
 import { createReport } from "@/lib/reports";
 import { attachTelegramMessage, discardUnsentApproval, listBidApprovals, queueBidApproval, saveReport } from "@/lib/store";
 import { sendApprovalRequest } from "@/lib/telegram";
@@ -24,7 +24,7 @@ export async function POST(req: NextRequest) {
   const project = await req.json().catch(() => null) as ProjectRecord | null;
   const minimumScore = integerEnv("AUTOMATION_MIN_SCORE", 72, 65, 95);
   if (!project || !canQueueForApproval(project, minimumScore)) {
-    return NextResponse.json({ error: "Project did not pass automation guard" }, { status: 422 });
+    return NextResponse.json({ error: "Project did not pass automation guard", reasons: project ? approvalGuardReasons(project, minimumScore) : ["missing_project"] }, { status: 422 });
   }
   const pendingLimit = integerEnv("AUTOMATION_MAX_PENDING", 10, 5, 25);
   const approvals = await listBidApprovals(100);

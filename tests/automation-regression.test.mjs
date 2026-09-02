@@ -54,7 +54,8 @@ test("browser Worker submits only after a server approval claim and fresh guard 
   assert.match(worker, /const guardedBid = fresh\.decision === "BID"/);
   assert.match(worker, /const safeManualReview = fresh\.decision === "MAYBE"/);
   assert.match(worker, /Fresh approval safety revalidation failed/);
-  assert.match(worker, /Project budget changed after approval/);
+  assert.match(worker, /budgetAllowsApprovedPrice/);
+  assert.match(worker, /Approved price is outside the current project budget/);
 });
 
 test("Worker blocks CAPTCHA and login challenges instead of bypassing them", () => {
@@ -86,6 +87,28 @@ test("Worker sends only the best candidate and polls approvals independently", (
   assert.match(worker, /approvalTimer/);
   assert.match(worker, /scanTimer/);
   assert.match(worker, /scanBusy/);
+  assert.match(worker, /automationMinScore/);
+});
+
+test("hosted panel uses an HttpOnly session instead of persisting COPILOT_KEY in localStorage", () => {
+  const page = read("panel/app/page.tsx");
+  const auth = read("panel/lib/auth.ts");
+  const session = read("panel/app/api/session/route.ts");
+  assert.match(session, /httpOnly: true/);
+  assert.match(session, /sameSite: "strict"/);
+  assert.match(auth, /bid_copilot_session/);
+  assert.match(page, /fetch\("\/api\/session"/);
+  assert.doesNotMatch(page, /localStorage\.setItem\("bid-copilot:key"/);
+});
+
+test("extension can reach production and defaults explicit approve to guarded submit", () => {
+  const manifest = read("extension/manifest.json");
+  const worker = read("extension/service-worker.js");
+  const options = read("extension/options.js");
+  assert.match(manifest, /https:\/\/www\.freelancerpanel\.ir\/\*/);
+  assert.match(worker, /panelUrl: "https:\/\/www\.freelancerpanel\.ir"/);
+  assert.match(worker, /autoSubmit: true/);
+  assert.match(options, /آزمایش اتصال/);
 });
 
 test("Worker normalizes list fallbacks before both generate requests", () => {

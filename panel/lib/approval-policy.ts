@@ -22,16 +22,24 @@ export function approvalId(project: ProjectRecord) {
   return createHash("sha256").update(`${project.id}|${project.url}|${Date.now()}|${randomBytes(4).toString("hex")}`).digest("hex").slice(0, 16);
 }
 
-export function canQueueForApproval(project: ProjectRecord, minimumScore = 72) {
+export function approvalGuardReasons(project: ProjectRecord, minimumScore = 72) {
+  const reasons: string[] = [];
   const guardedBid = project.decision === "BID" && project.guardReady === true;
   const safeManualReview = project.decision === "MAYBE"
     && project.domainGate === "allowed"
     && project.priceWithinBudget === true
     && (project.bidQualityScore || 0) >= 70;
-  return (guardedBid || safeManualReview)
-    && project.priceWithinBudget === true
-    && (project.jobScore || 0) >= minimumScore
-    && Boolean(project.bid && project.recommendedPrice && project.recommendedDuration);
+  if (!guardedBid && !safeManualReview) reasons.push("decision_or_guard");
+  if (project.priceWithinBudget !== true) reasons.push("price_outside_budget");
+  if ((project.jobScore || 0) < minimumScore) reasons.push("score_below_minimum");
+  if (!project.bid) reasons.push("missing_bid");
+  if (!project.recommendedPrice) reasons.push("missing_price");
+  if (!project.recommendedDuration) reasons.push("missing_duration");
+  return reasons;
+}
+
+export function canQueueForApproval(project: ProjectRecord, minimumScore = 72) {
+  return approvalGuardReasons(project, minimumScore).length === 0;
 }
 
 export function isApprovalFresh(record: BidApprovalRecord, now = Date.now()) {
