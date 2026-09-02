@@ -1,11 +1,11 @@
 importScripts("domain-engine.js", "guard-policy.js");
 
-const ENGINE_VERSION = "0.6.0";
+const ENGINE_VERSION = "0.6.1";
 
 const DEFAULTS = {
-  panelUrl: "http://localhost:3000",
+  panelUrl: "https://www.freelancerpanel.ir",
   copilotKey: "change-me",
-  autoSubmit: false,
+  autoSubmit: true,
   defaultDuration: "",
   freelancerProfile: "",
   preferredDomains: [],
@@ -35,6 +35,8 @@ async function ensureProposalForm() {
 
 async function panelRequest(path, options = {}) {
   const s = await settings();
+  if (!/^https:\/\//i.test(s.panelUrl) && !/^http:\/\/localhost(?::\d+)?$/i.test(s.panelUrl)) throw new Error("آدرس پنل افزونه معتبر نیست.");
+  if (!s.copilotKey || s.copilotKey === "change-me") throw new Error("ابتدا COPILOT_KEY را در تنظیمات افزونه وارد و اتصال را آزمایش کن.");
   const r = await fetch(`${s.panelUrl.replace(/\/$/, "")}${path}`, { ...options, headers: { "Content-Type": "application/json", "X-Copilot-Key": s.copilotKey, ...(options.headers || {}) } });
   const d = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(d.error || `Panel error ${r.status}`);

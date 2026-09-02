@@ -1,7 +1,7 @@
 {
   "name": "freelance-bid-copilot-desktop",
   "private": true,
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Secure desktop workspace for authenticated Kaya and Ponisha browsing",
   "main": "main.cjs",
   "scripts": {
