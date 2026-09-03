@@ -105,15 +105,26 @@ test("Worker sends only the best candidate and polls approvals independently", (
   assert.match(worker, /automationMinScore/);
 });
 
-test("hosted panel uses an HttpOnly session instead of persisting COPILOT_KEY in localStorage", () => {
+test("hosted panel uses a private username/password session without persisting secrets in localStorage", () => {
   const page = read("panel/app/page.tsx");
   const auth = read("panel/lib/auth.ts");
   const session = read("panel/app/api/session/route.ts");
   assert.match(session, /httpOnly: true/);
   assert.match(session, /sameSite: "strict"/);
+  assert.match(session, /isPanelCredentials\(username, password\)/);
+  assert.match(session, /remember \? \{ maxAge: REMEMBERED_SESSION_DURATION_SECONDS \}/);
   assert.match(auth, /bid_copilot_session/);
+  assert.match(auth, /PANEL_USERNAME/);
+  assert.match(auth, /PANEL_PASSWORD/);
+  assert.match(auth, /PANEL_SESSION_SECRET/);
+  assert.match(auth, /createHmac\("sha256"/);
   assert.match(page, /fetch\("\/api\/session"/);
+  assert.match(page, /مرا به خاطر بسپار/);
+  assert.match(page, /name="username"/);
+  assert.match(page, /name="password"/);
+  assert.match(page, /method: "DELETE"/);
   assert.doesNotMatch(page, /localStorage\.setItem\("bid-copilot:key"/);
+  assert.doesNotMatch(page, /localStorage\.setItem\([^\n]*password/i);
 });
 
 test("extension can reach production and defaults explicit approve to guarded submit", () => {

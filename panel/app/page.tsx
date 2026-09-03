@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import type { BidApprovalRecord, ProjectPayload, ProjectRecord, ReportRecord, SearchRecord, SearchResultItem, WorkerHeartbeat } from "@/lib/types";
 
 type Marketplace = "kaya" | "ponisha";
@@ -13,6 +13,7 @@ const MARKETPLACES: Record<Marketplace, { label: string; url: string; short: str
 };
 const DATA_REFRESH_INTERVAL = 45_000;
 const AUTOMATION_REFRESH_INTERVAL = 5_000;
+const JSON_HEADERS = { "Content-Type": "application/json" };
 
 function Icon({ children }: { children: ReactNode }) {
   return <span className="icon" aria-hidden="true">{children}</span>;
@@ -75,29 +76,28 @@ export default function Page() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [authorized, setAuthorized] = useState(false);
   const [intelCollapsed, setIntelCollapsed] = useState(false);
-  const [accessKey, setAccessKey] = useState("");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [rememberLogin, setRememberLogin] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [loginBusy, setLoginBusy] = useState(false);
+  const [loginError, setLoginError] = useState("");
+  const [loginConfigured, setLoginConfigured] = useState(true);
   const [panelUrl, setPanelUrl] = useState("");
   const [profile, setProfile] = useState("");
   const [domains, setDomains] = useState("Web/UI, WordPress/CMS");
 
-  const headers = useMemo<Record<string, string>>(() => ({
-    "Content-Type": "application/json",
-    ...(accessKey ? { "X-Copilot-Key": accessKey } : {})
-  }), [accessKey]);
-
   const refreshData = useCallback(async () => {
     try {
       const [projectResponse, searchResponse, approvalResponse, workerResponse, reportResponse] = await Promise.all([
-        fetch("/api/projects", { headers, cache: "no-store" }),
-        fetch("/api/searches", { headers, cache: "no-store" }),
-        fetch("/api/automation/candidates", { headers, cache: "no-store" }),
-        fetch("/api/automation/heartbeat", { headers, cache: "no-store" }),
-        fetch("/api/reports", { headers, cache: "no-store" })
+        fetch("/api/projects", { headers: JSON_HEADERS, cache: "no-store" }),
+        fetch("/api/searches", { headers: JSON_HEADERS, cache: "no-store" }),
+        fetch("/api/automation/candidates", { headers: JSON_HEADERS, cache: "no-store" }),
+        fetch("/api/automation/heartbeat", { headers: JSON_HEADERS, cache: "no-store" }),
+        fetch("/api/reports", { headers: JSON_HEADERS, cache: "no-store" })
       ]);
       if ([projectResponse, searchResponse, approvalResponse, workerResponse, reportResponse].some((response) => response.status === 401)) {
         setAuthorized(false);
-        setSettingsOpen(true);
-        setNotice({ kind: "error", text: "پنل قفل است؛ کلید دسترسی را یک‌بار وارد کن." });
         return;
       }
       const [projectData, searchData, approvalData, workerData, reportData] = await Promise.all([
@@ -116,13 +116,17 @@ export default function Page() {
     } catch {
       setNotice({ kind: "error", text: "اتصال به API پنل برقرار نشد." });
     }
-  }, [headers]);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
-    const savedKey = localStorage.getItem("bid-copilot:key") || "";
+    const savedUsername = localStorage.getItem("bid-copilot:remembered-username") || "";
     const savedProfile = localStorage.getItem("bid-copilot:profile");
     const savedDomains = localStorage.getItem("bid-copilot:domains");
+    if (savedUsername) {
+      setUsername(savedUsername);
+      setRememberLogin(true);
+    }
     if (savedProfile) setProfile(savedProfile);
     if (savedDomains) setDomains(savedDomains);
     const bridge = window.bidCopilotDesktop;
@@ -135,15 +139,13 @@ export default function Page() {
     }
     void (async () => {
       try {
-        const response = savedKey
-          ? await fetch("/api/session", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key: savedKey }) })
-          : await fetch("/api/session", { cache: "no-store" });
+        const response = await fetch("/api/session", { cache: "no-store" });
         if (cancelled) return;
         if (response.ok) {
-          localStorage.removeItem("bid-copilot:key");
           setAuthorized(true);
         } else {
-          setSettingsOpen(true);
+          const data = await response.json().catch(() => null) as { configured?: boolean } | null;
+          setLoginConfigured(data?.configured !== false);
         }
       } finally {
         if (!cancelled) setConfigReady(true);
@@ -433,10 +435,10 @@ export default function Page() {
       if (!scan?.ok) throw new Error("این صفحه به‌عنوان فهرست پروژه شناسایی نشد.");
       const response = await fetch("/api/searches", {
         method: "POST",
-        headers,
+        headers: JSON_HEADERS,
         body: JSON.stringify({ site: scan.site, query, pageUrl: scan.pageUrl, results: scan.items })
       });
-      if (!response.ok) throw new Error(response.status === 401 ? "کلید دسترسی پنل معتبر نیست." : "ذخیره نتایج ناموفق بود.");
+      if (!response.ok) throw new Error(response.status === 401 ? "نشست ورود منقضی شده است." : "ذخیره نتایج ناموفق بود.");
       const saved = await response.json() as SearchRecord;
       setSearches((current) => [saved, ...current]);
       setSelectedSearch(saved);
@@ -477,7 +479,7 @@ export default function Page() {
   async function generateFromPayload(payload: ProjectPayload) {
     const response = await fetch("/api/generate", {
         method: "POST",
-        headers,
+        headers: JSON_HEADERS,
         body: JSON.stringify({
           ...payload,
           freelancerProfile: profile,
@@ -537,7 +539,7 @@ export default function Page() {
         duration: selectedProject.recommendedDuration
       })})`);
       if (!fill.ok) throw new Error(fill.reason || "فرم پیدا نشد.");
-      await fetch("/api/projects", { method: "PATCH", headers, body: JSON.stringify({ url: selectedProject.url, status: "filled" }) });
+      await fetch("/api/projects", { method: "PATCH", headers: JSON_HEADERS, body: JSON.stringify({ url: selectedProject.url, status: "filled" }) });
       setProjects((current) => current.map((item) => item.url === selectedProject.url ? { ...item, status: "filled" } : item));
       setSelectedProject({ ...selectedProject, status: "filled" });
       setNotice({ kind: "success", text: "فرم داخل مرورگر پر شد؛ ارسال نهایی همچنان دستی است." });
@@ -548,29 +550,55 @@ export default function Page() {
     }
   }
 
-  async function saveSettings() {
-    if (!authorized || accessKey) {
+  async function handleLogin(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setLoginBusy(true);
+    setLoginError("");
+    try {
       const response = await fetch("/api/session", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ key: accessKey })
+        headers: JSON_HEADERS,
+        body: JSON.stringify({ username, password, remember: rememberLogin })
       });
       if (!response.ok) {
-        setAuthorized(false);
-        setNotice({ kind: "error", text: "کلید دسترسی صحیح نیست؛ تنظیمات ذخیره نشد." });
-        return;
+        if (response.status === 503) setLoginConfigured(false);
+        throw new Error(response.status === 429
+          ? "تلاش‌های ناموفق زیاد بوده؛ ۱۵ دقیقه دیگر دوباره امتحان کن."
+          : response.status === 503
+            ? "ورود پنل هنوز روی سرور تنظیم نشده است."
+            : "نام کاربری یا رمز عبور درست نیست.");
       }
+      if (rememberLogin) localStorage.setItem("bid-copilot:remembered-username", username.trim());
+      else localStorage.removeItem("bid-copilot:remembered-username");
+      setPassword("");
       setAuthorized(true);
-      setAccessKey("");
-      localStorage.removeItem("bid-copilot:key");
+    } catch (error) {
+      setLoginError(error instanceof Error ? error.message : "ورود به پنل انجام نشد.");
+    } finally {
+      setLoginBusy(false);
     }
+  }
+
+  async function logout() {
+    await fetch("/api/session", { method: "DELETE" }).catch(() => undefined);
+    setAuthorized(false);
+    setPassword("");
+    setSettingsOpen(false);
+    setProjects([]);
+    setSearches([]);
+    setApprovals([]);
+    setWorkers([]);
+    setReports([]);
+  }
+
+  async function saveSettings() {
     localStorage.setItem("bid-copilot:profile", profile);
     localStorage.setItem("bid-copilot:domains", domains);
     if (desktop && panelUrl && window.bidCopilotDesktop) {
       await window.bidCopilotDesktop.setPanelUrl(panelUrl);
     }
     setSettingsOpen(false);
-    setNotice({ kind: "success", text: "اتصال امن پنل برقرار و تنظیمات ذخیره شد." });
+    setNotice({ kind: "success", text: "تنظیمات پنل ذخیره شد." });
     void refreshData();
   }
 
@@ -582,6 +610,34 @@ export default function Page() {
     setMode("browser");
     setInspected(null);
     void navigateBrowser(result.url);
+  }
+
+  if (!configReady) {
+    return <main className="loginShell"><div className="loginLoading"><span className="loginSpinner" /><strong>در حال بررسی نشست امن…</strong></div></main>;
+  }
+
+  if (!authorized) {
+    return (
+      <main className="loginShell" dir="rtl">
+        <section className="loginStage" aria-hidden="true">
+          <div className="loginBrand"><div className="brandMark">B<span>•</span></div><div><b>BID COPILOT</b><small>PRIVATE WORKSPACE</small></div></div>
+          <div className="loginPitch"><span className="overline">SECURE CONTROL PLANE</span><h1>پنل تصمیم‌گیری و ارسال بید، فقط برای شما</h1><p>پروژه‌ها، گزارش‌های Worker و تأییدهای تلگرام پشت یک نشست امن و مستقل از کلیدهای API نگه‌داری می‌شوند.</p></div>
+          <div className="loginSignals"><span><i /> نشست HttpOnly</span><span><i /> ورود رمزنگاری‌شده</span><span><i /> کلیدهای API جدا</span></div>
+        </section>
+        <section className="loginPanel">
+          <form className="loginCard" onSubmit={handleLogin}>
+            <div className="loginCardHead"><span className="loginLock">⌾</span><div><span className="overline">WELCOME BACK</span><h2>ورود به پنل</h2><p>برای ادامه، نام کاربری و رمز عبور پنل را وارد کنید.</p></div></div>
+            {!loginConfigured && <div className="loginConfigError">متغیرهای ورود پنل روی سرور کامل تنظیم نشده‌اند.</div>}
+            <label className="loginField" htmlFor="panel-username"><span>نام کاربری</span><input id="panel-username" name="username" dir="ltr" value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="username" required autoFocus placeholder="username" /></label>
+            <label className="loginField" htmlFor="panel-password"><span>رمز عبور</span><span className="passwordInput"><input id="panel-password" name="password" dir="ltr" type={showPassword ? "text" : "password"} value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" required placeholder="••••••••••••" /><button type="button" onClick={() => setShowPassword((value) => !value)} aria-label={showPassword ? "پنهان‌کردن رمز" : "نمایش رمز"}>{showPassword ? "پنهان" : "نمایش"}</button></span></label>
+            <label className="rememberRow"><input type="checkbox" checked={rememberLogin} onChange={(event) => setRememberLogin(event.target.checked)} /><span><b>مرا به خاطر بسپار</b><small>ورود روی این دستگاه تا ۳۰ روز فعال می‌ماند.</small></span></label>
+            {loginError && <p className="loginError" role="alert">{loginError}</p>}
+            <button className="loginSubmit" type="submit" disabled={loginBusy || !username.trim() || !password}>{loginBusy ? <><span className="buttonSpinner" /> در حال ورود…</> : "ورود امن به Workspace"}</button>
+            <p className="loginPrivacy">رمز عبور داخل مرورگر ذخیره نمی‌شود؛ گزینهٔ بالا فقط نشست امن و نام کاربری را به خاطر می‌سپارد.</p>
+          </form>
+        </section>
+      </main>
+    );
   }
 
   const activeResultCount = selectedSearch?.results.length || 0;
@@ -604,7 +660,7 @@ export default function Page() {
           <button className={mode === "projects" ? "active" : ""} onClick={() => setMode("projects")} title="پروژه‌ها"><Icon>▤</Icon><small>پروژه‌ها</small></button>
           <button className={mode === "automation" ? "active" : ""} onClick={() => setMode("automation")} title="اتوماسیون"><Icon>⚡</Icon><small>اتوماسیون</small></button>
         </nav>
-        <button className="railSettings" onClick={() => setSettingsOpen(true)} title="تنظیمات"><Icon>⚙</Icon></button>
+        <div className="railActions"><button className="railSettings" onClick={() => setSettingsOpen(true)} title="تنظیمات"><Icon>⚙</Icon></button><button className="railLogout" onClick={() => void logout()} title="خروج امن"><Icon>↪</Icon></button></div>
       </aside>
 
       <section className="appSurface">
@@ -651,8 +707,7 @@ export default function Page() {
                     <article className={errorReportCount ? "critical" : "healthy"}><span>ERRORS</span><strong>{errorReportCount}</strong><small>در {reports.length} رویداد اخیر</small></article>
                   </section>
                   <section className="reportTimeline">
-                    {!authorized && <div className="zeroState">پنل قفل است. از تنظیمات، COPILOT_KEY را یک‌بار وارد کن تا گزارش‌های ثبت‌شده نمایش داده شوند.</div>}
-                    {authorized && reports.length === 0 && <div className="zeroState">هنوز گزارشی ثبت نشده است؛ اولین اسکن Worker این بخش را پر می‌کند.</div>}
+                    {reports.length === 0 && <div className="zeroState">هنوز گزارشی ثبت نشده است؛ اولین اسکن Worker این بخش را پر می‌کند.</div>}
                     {reports.map((report) => <article key={report.id} className={`reportEntry ${report.level}`}>
                       <div className="reportMarker"><i /></div>
                       <div className="reportContent">
@@ -744,11 +799,11 @@ export default function Page() {
           </aside>
         </div>
 
-        <footer className="statusBar" dir="ltr"><span><i className={workerOnline ? "online" : ""} /> WORKER {workerOnline ? "ONLINE" : "OFFLINE"}</span><span>API {authorized ? "READY" : "LOCKED"}</span><span>QUEUE {pendingApprovalCount}</span><span>REPORTS {reports.length}</span><span className="spacer" /><span>TWO-STAGE TELEGRAM APPROVAL</span><span>FRESH GUARD BEFORE SUBMIT</span><span>v0.6.2</span></footer>
+        <footer className="statusBar" dir="ltr"><span><i className={workerOnline ? "online" : ""} /> WORKER {workerOnline ? "ONLINE" : "OFFLINE"}</span><span>API READY</span><span>QUEUE {pendingApprovalCount}</span><span>REPORTS {reports.length}</span><span className="spacer" /><span>TWO-STAGE TELEGRAM APPROVAL</span><span>FRESH GUARD BEFORE SUBMIT</span><span>v0.6.2</span></footer>
       </section>
 
       {notice && <div className={`toast ${notice.kind}`}>{notice.text}</div>}
-      {settingsOpen && <div className="modalBackdrop" onMouseDown={(event) => event.target === event.currentTarget && authorized && setSettingsOpen(false)}><section className="settingsModal"><div className="modalHead"><div><span className="overline">WORKSPACE CONFIG</span><h2>{authorized ? "تنظیمات اتصال و پروفایل" : "ورود امن به پنل"}</h2></div>{authorized && <button onClick={() => setSettingsOpen(false)}>×</button>}</div><label>کلید دسترسی API<input type="password" value={accessKey} onChange={(event) => setAccessKey(event.target.value)} placeholder={authorized ? "برای تعویض کلید، مقدار جدید را وارد کن" : "COPILOT_KEY"} autoComplete="current-password" /></label><label>آدرس پنل روی دامنه<input dir="ltr" value={panelUrl} onChange={(event) => setPanelUrl(event.target.value)} placeholder="https://www.freelancerpanel.ir" /></label><label>پروفایل فریلنسر<textarea value={profile} onChange={(event) => setProfile(event.target.value)} placeholder="مهارت‌ها، سابقه و نوع پروژه‌های مطلوب…" /></label><label>حوزه‌های مجاز Hard Domain Gate<input dir="ltr" value={domains} onChange={(event) => setDomains(event.target.value)} placeholder="Web/UI, WordPress/CMS" /></label><p>کلید فقط برای ساخت نشست HttpOnly ارسال می‌شود و دیگر داخل localStorage مرورگر نگه‌داری نمی‌شود. Cookie سایت‌های فریلنسری هرگز وارد پنل یا دیتابیس نمی‌شود.</p><button className="saveSettings" onClick={saveSettings}>{authorized ? "ذخیره تنظیمات" : "اتصال و نمایش گزارش‌ها"}</button></section></div>}
+      {settingsOpen && <div className="modalBackdrop" onMouseDown={(event) => event.target === event.currentTarget && setSettingsOpen(false)}><section className="settingsModal"><div className="modalHead"><div><span className="overline">WORKSPACE CONFIG</span><h2>تنظیمات اتصال و پروفایل</h2></div><button onClick={() => setSettingsOpen(false)}>×</button></div><label>آدرس پنل روی دامنه<input dir="ltr" value={panelUrl} onChange={(event) => setPanelUrl(event.target.value)} placeholder="https://www.freelancerpanel.ir" /></label><label>پروفایل فریلنسر<textarea value={profile} onChange={(event) => setProfile(event.target.value)} placeholder="مهارت‌ها، سابقه و نوع پروژه‌های مطلوب…" /></label><label>حوزه‌های مجاز Hard Domain Gate<input dir="ltr" value={domains} onChange={(event) => setDomains(event.target.value)} placeholder="Web/UI, WordPress/CMS" /></label><p>ورود پنل با نشست HttpOnly محافظت می‌شود. کلیدهای COPILOT و Worker مستقل هستند و در مرورگر پنل ذخیره نمی‌شوند.</p><button className="saveSettings" onClick={saveSettings}>ذخیره تنظیمات</button></section></div>}
     </main>
   );
 }
