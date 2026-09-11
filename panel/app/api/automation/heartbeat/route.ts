@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { isAuthorized, isWorkerAuthorized, readsRequireAuthorization } from "@/lib/auth";
 import { createReport } from "@/lib/reports";
 import { listWorkerHeartbeats, saveReport, saveWorkerHeartbeat } from "@/lib/store";
-import { sendWorkerAlert, sendWorkerRecovery } from "@/lib/telegram";
 import type { WorkerHeartbeat } from "@/lib/types";
 import { evaluateWorkerAlert } from "@/lib/worker-alert-policy";
 
@@ -28,24 +27,19 @@ export async function POST(req: NextRequest) {
     alertState: decision.alertState
   };
   await saveWorkerHeartbeat(heartbeat);
-  const workerAlertsEnabled = process.env.TELEGRAM_WORKER_ALERTS_ENABLED === "true";
   if (decision.action === "alert" || decision.action === "recovered") {
     const recovered = decision.action === "recovered";
-    const delivery = workerAlertsEnabled
-      ? await (recovered ? sendWorkerRecovery(heartbeat, decision.site) : sendWorkerAlert(heartbeat)).catch(() => null)
-      : null;
     await saveReport(createReport({
-      category: delivery ? "telegram" : "worker",
+      category: "worker",
       eventType: recovered ? "worker_recovery" : "worker_alert",
       level: recovered ? "success" : "warning",
       title: recovered ? "اتصال Worker بازیابی شد" : "هشدار Worker",
-      message: delivery?.text || heartbeat.message || heartbeat.status,
+      message: heartbeat.message || heartbeat.status,
       site: decision.site || heartbeat.currentSite,
       workerId,
       status: heartbeat.status,
       metadata: {
-        telegramDelivered: Boolean(delivery),
-        telegramMessageId: delivery?.messageId || null,
+        telegramDelivered: false,
         kayaSession: heartbeat.sessionState?.kaya || null,
         ponishaSession: heartbeat.sessionState?.ponisha || null
       }
