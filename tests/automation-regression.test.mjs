@@ -18,37 +18,31 @@ test("Telegram approval is short-lived, one-time, and bound to an authorized acc
   assert.match(webhook, /decideBidApproval/);
 });
 
-test("Telegram uses separate project and final bid approvals", () => {
-  const policy = read("panel/lib/approval-policy.ts");
+test("Telegram sends notification-only project links", () => {
   const telegram = read("panel/lib/telegram.ts");
-  const webhook = read("panel/app/api/telegram/webhook/route.ts");
-  const store = read("panel/lib/store.ts");
-  assert.match(policy, /project_approve/);
-  assert.match(policy, /bid_approve/);
-  assert.match(telegram, /تأیید آگهی/);
-  assert.match(telegram, /تأیید نهایی و ارسال/);
-  assert.match(webhook, /decideProjectApproval/);
-  assert.match(webhook, /sendBidApprovalRequest/);
-  assert.match(store, /status = 'bid_pending'/);
-  assert.match(store, /WHERE status = 'approved'/);
-});
-
-test("approval queue requires a guarded BID inside budget", () => {
-  const policy = read("panel/lib/approval-policy.ts");
-  assert.match(policy, /project\.decision === "BID"/);
-  assert.match(policy, /project\.guardReady === true/);
-  assert.match(policy, /project\.priceWithinBudget === true/);
-  assert.match(policy, /jobScore/);
-  assert.match(policy, /safeManualReview/);
-  assert.match(policy, /project\.domainGate === "allowed"/);
-});
-
-test("Telegram approval delivery is capped to ten per Tehran day", () => {
   const candidates = read("panel/app/api/automation/candidates/route.ts");
-  const dailyPolicy = read("panel/lib/daily-approval-policy.ts");
-  assert.match(candidates, /AUTOMATION_DAILY_TELEGRAM_LIMIT/);
-  assert.match(candidates, /countApprovalsForDay/);
-  assert.match(dailyPolicy, /Asia\/Tehran/);
+  assert.match(telegram, /آگهی جدید/);
+  assert.match(telegram, /باز کردن آگهی/);
+  assert.match(telegram, /url: project\.url/);
+  assert.doesNotMatch(telegram.slice(telegram.indexOf("sendProjectApprovalRequest"), telegram.indexOf("sendBidApprovalRequest")), /callback_data/);
+  assert.match(candidates, /status: "notified"/);
+  assert.match(candidates, /eventType: "new_project_sent"/);
+});
+
+test("new project notifications require only valid marketplace identity", () => {
+  const candidates = read("panel/app/api/automation/candidates/route.ts");
+  assert.match(candidates, /project\?\.url/);
+  assert.match(candidates, /project\.title/);
+  assert.match(candidates, /project\.site/);
+  assert.doesNotMatch(candidates, /canQueueForApproval/);
+  assert.doesNotMatch(candidates, /AUTOMATION_MIN_SCORE/);
+});
+
+test("notification delivery is deduplicated by project URL", () => {
+  const candidates = read("panel/app/api/automation/candidates/route.ts");
+  const store = read("panel/lib/store.ts");
+  assert.match(candidates, /item\.url === project\.url/);
+  assert.match(store, /ON CONFLICT \(url\) DO NOTHING/);
 });
 
 test("approved work is claimed atomically and cannot be submitted twice", () => {
@@ -59,18 +53,12 @@ test("approved work is claimed atomically and cannot be submitted twice", () => 
   assert.match(store, /WHERE id = \$1 AND status = 'submitting'/);
 });
 
-test("browser Worker submits only after a server approval claim and fresh guard validation", () => {
+test("browser Worker never schedules automatic bid submission", () => {
   const worker = read("worker/src/index.mjs");
-  const approvalCycle = worker.slice(worker.indexOf("async function approvalCycle"), worker.indexOf("async function main"));
-  assert.match(approvalCycle, /\/api\/automation\/claim/);
-  assert.match(approvalCycle, /if \(!approval\) return/);
-  assert.match(approvalCycle, /await submitApproved\(approval\)/);
-  assert.equal((worker.match(/BidCopilotAdapter\.submit\(\)/g) || []).length, 1);
-  assert.match(worker, /const guardedBid = fresh\.decision === "BID"/);
-  assert.match(worker, /const safeManualReview = fresh\.decision === "MAYBE"/);
-  assert.match(worker, /Fresh approval safety revalidation failed/);
-  assert.match(worker, /budgetAllowsApprovedPrice/);
-  assert.match(worker, /Approved price is outside the current project budget/);
+  const main = worker.slice(worker.indexOf("async function main"), worker.indexOf("async function shutdown"));
+  assert.doesNotMatch(main, /approvalCycle/);
+  assert.doesNotMatch(main, /approvalTimer/);
+  assert.match(main, /scanTimer/);
 });
 
 test("Worker blocks CAPTCHA and login challenges instead of bypassing them", () => {
@@ -94,15 +82,15 @@ test("Worker alerts are deduplicated persistently and report recovery", () => {
   assert.match(telegram, /sendWorkerRecovery/);
 });
 
-test("Worker sends only the best candidate and polls approvals independently", () => {
+test("Worker sends every fresh inspected project and scans independently", () => {
   const worker = read("worker/src/index.mjs");
-  assert.match(worker, /TOP_BIDS_PER_CYCLE/);
-  assert.match(worker, /clamp\(process\.env\.TOP_BIDS_PER_CYCLE, 1, 1, 1\)/);
-  assert.match(worker, /safeManualReview/);
-  assert.match(worker, /approvalTimer/);
+  const scan = worker.slice(worker.indexOf("async function scanSite"), worker.indexOf("async function guardedScanCycle"));
+  assert.match(scan, /const freshProjects = candidates/);
+  assert.match(scan, /for \(const project of freshProjects\)/);
+  assert.match(scan, /\/api\/automation\/candidates/);
+  assert.doesNotMatch(scan, /safeManualReview/);
   assert.match(worker, /scanTimer/);
   assert.match(worker, /scanBusy/);
-  assert.match(worker, /automationMinScore/);
 });
 
 test("hosted panel uses a private username/password session without persisting secrets in localStorage", () => {
@@ -137,12 +125,12 @@ test("extension can reach production and defaults explicit approve to guarded su
   assert.match(options, /آزمایش اتصال/);
 });
 
-test("Worker normalizes list fallbacks before both generate requests", () => {
+test("Worker normalizes fresh listings without generating or submitting bids", () => {
   const worker = read("worker/src/index.mjs");
-  assert.match(worker, /import \{ normalizeProjectInspection \}/);
-  assert.equal((worker.match(/normalizeProjectInspection\(\{/g) || []).length, 2);
-  assert.match(worker, /item,/);
-  assert.match(worker, /approval\.project/);
+  const scanSite = worker.slice(worker.indexOf("async function scanSite"), worker.indexOf("async function scanCycle"));
+  assert.match(scanSite, /normalizeProjectInspection\(\{/);
+  assert.doesNotMatch(scanSite, /\/api\/generate/);
+  assert.doesNotMatch(scanSite, /BidCopilotAdapter\.submit/);
 });
 
 test("Worker isolates timed-out project navigations and bounds production polling", () => {
@@ -160,11 +148,12 @@ test("Worker isolates timed-out project navigations and bounds production pollin
   assert.doesNotMatch(scanSite, /await listingPage\.goto\(item\.url/);
 });
 
-test("technical Worker alerts are opt-in so the Telegram chat stays approval-only", () => {
+test("Telegram stays exclusive to new project notifications", () => {
   const heartbeat = read("panel/app/api/automation/heartbeat/route.ts");
   const telegram = read("panel/lib/telegram.ts");
-  assert.match(heartbeat, /TELEGRAM_WORKER_ALERTS_ENABLED/);
-  assert.match(telegram, /بهترین آگهی این چرخه/);
+  assert.doesNotMatch(heartbeat, /sendWorkerAlert/);
+  assert.doesNotMatch(heartbeat, /sendWorkerRecovery/);
+  assert.match(telegram, /آگهی جدید/);
   assert.match(telegram, /inline_keyboard/);
 });
 
