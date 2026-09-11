@@ -45,7 +45,6 @@ export async function sendProjectApprovalRequest(record: BidApprovalRecord, _tok
     "",
     `<b>${escapeHtml(project.title)}</b>`,
     `${escapeHtml(project.site)} · بودجه: ${escapeHtml(project.budget || "نامشخص")}`,
-    project.age ? `زمان انتشار: ${escapeHtml(project.age)}` : "",
     project.skills?.length ? `مهارت‌ها: ${escapeHtml(project.skills.join("، "))}` : "",
     "",
     "برای بررسی و ارسال بید با اکستنشن، آگهی را باز کنید."
