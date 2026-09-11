@@ -7,7 +7,7 @@ import { normalizeProjectInspection } from "./project-normalizer.mjs";
 import { blockedRetryDelayMs, describeWorkerError } from "./runtime-policy.mjs";
 import { budgetAllowsApprovedPrice } from "./budget-policy.mjs";
 
-const VERSION = "0.6.3";
+const VERSION = "0.7.0";
 const root = path.resolve(import.meta.dirname, "../..");
 const dataDir = path.resolve(process.env.BROWSER_DATA_DIR || "/data");
 const panelUrl = String(process.env.PANEL_URL || "").replace(/\/$/, "");
@@ -224,17 +224,14 @@ async function scanSite(site) {
             currentUrl: detailPage.url()
           });
           if (!inspected.title || !inspected.url) throw new Error("Inspection missing title or URL after listing fallback");
-          const generated = await api("/api/generate", {
-            worker: false,
-            body: { ...inspected, freelancerProfile: profile, preferredDomains: domains, capturedAt: new Date().toISOString() }
+          candidates.push({
+            ...inspected,
+            capturedAt: new Date().toISOString(),
+            status: "generated",
+            bid: "",
+            jobScore: Number(item.score || 0),
+            matchScore: Number(item.matchScore || item.score || 0)
           });
-          const guardedBid = generated.decision === "BID" && generated.guardReady === true;
-          const safeManualReview = generated.decision === "MAYBE"
-            && generated.domainGate === "allowed"
-            && generated.priceWithinBudget === true
-            && (generated.bidQualityScore || 0) >= 70;
-          if ((guardedBid || safeManualReview) && generated.priceWithinBudget === true && (generated.jobScore || 0) >= automationMinScore) candidates.push(generated);
-          else seen.add(item.url);
         } catch (error) {
           console.error(`inspect ${site} ${item.url}:`, error.message);
         } finally {
@@ -255,8 +252,8 @@ async function scanCycle() {
   let queuedCount = 0;
   let queueFailures = 0;
   for (const site of Object.keys(markets)) candidates.push(...await scanSite(site));
-  const best = candidates.sort((a, b) => (b.jobScore || 0) - (a.jobScore || 0) || (b.matchScore || 0) - (a.matchScore || 0)).slice(0, topPerCycle);
-  for (const project of best) {
+  const freshProjects = candidates;
+  for (const project of freshProjects) {
     try {
       const result = await api("/api/automation/candidates", { body: project });
       if (result.created) queuedCount += 1;
@@ -268,19 +265,19 @@ async function scanCycle() {
   }
   lastScanAt = new Date().toISOString();
   await atomicWrite(seenFile, JSON.stringify([...seen].slice(-5000)));
-  await heartbeat("idle", `Scan complete; ${queuedCount} approval request(s) queued`);
+  await heartbeat("idle", `Scan complete; ${queuedCount} new project notification(s) sent`);
   await report({
     category: "scan",
     eventType: "scan_completed",
     level: queueFailures ? "warning" : "success",
     title: "اسکن دوره‌ای تکمیل شد",
     message: queuedCount
-      ? `${queuedCount} آگهی برتر برای تأیید به تلگرام ارسال شد.`
-      : `${candidates.length} آگهی مناسب بررسی شد؛ مورد تازه‌ای برای تأیید ارسال نشد.`,
+      ? `${queuedCount} آگهی جدید با لینک مستقیم به تلگرام ارسال شد.`
+      : `${candidates.length} آگهی تازه بررسی شد؛ اعلان ارسال‌نشده‌ای باقی نماند.`,
     status: "idle",
     metadata: {
       candidateCount: candidates.length,
-      selectedCount: best.length,
+      selectedCount: freshProjects.length,
       queuedCount,
       failureCount: queueFailures,
       kayaSession: sessionState.kaya,
@@ -414,10 +411,9 @@ async function main() {
   };
   void guardedScanCycle().catch(handleScanError);
   const scanTimer = setInterval(() => void guardedScanCycle().catch(handleScanError), scanInterval);
-  const approvalTimer = setInterval(() => void approvalCycle(), approvalPoll);
   const heartbeatTimer = setInterval(() => void heartbeat(), 25_000);
-  process.once("SIGTERM", () => shutdown([scanTimer, approvalTimer, heartbeatTimer]));
-  process.once("SIGINT", () => shutdown([scanTimer, approvalTimer, heartbeatTimer]));
+  process.once("SIGTERM", () => shutdown([scanTimer, heartbeatTimer]));
+  process.once("SIGINT", () => shutdown([scanTimer, heartbeatTimer]));
 }
 
 async function shutdown(timers) {
