@@ -71,6 +71,7 @@ export type SearchRecord = {
 };
 
 export type ApprovalStatus =
+  | "notified"
   | "project_pending"
   | "bid_pending"
   | "approved"
