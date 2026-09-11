@@ -36,32 +36,27 @@ async function telegram<T>(method: string, payload: Record<string, unknown>): Pr
   return data.result;
 }
 
-export async function sendProjectApprovalRequest(record: BidApprovalRecord, token: string) {
+export async function sendProjectApprovalRequest(record: BidApprovalRecord, _token: string) {
   const chatId = process.env.TELEGRAM_CHAT_ID?.trim();
   if (!chatId) throw new Error("TELEGRAM_CHAT_ID is not configured");
   const project = record.project;
   const text = [
-    "<b>بهترین آگهی این چرخه</b>",
+    "<b>آگهی جدید</b>",
     "",
     `<b>${escapeHtml(project.title)}</b>`,
-    `${escapeHtml(project.site)} · امتیاز ${project.jobScore ?? "—"} · تطابق ${project.matchScore ?? "—"}`,
-    `بودجه: ${escapeHtml(project.budget || "نامشخص")}`,
-    `حوزه: ${escapeHtml(project.primaryDomain || "نامشخص")}`,
-    `دلیل انتخاب: ${escapeHtml(project.matchReason || project.decisionReason || "امتیاز و تطابق مناسب")}`,
+    `${escapeHtml(project.site)} · بودجه: ${escapeHtml(project.budget || "نامشخص")}`,
+    project.age ? `زمان انتشار: ${escapeHtml(project.age)}` : "",
+    project.skills?.length ? `مهارت‌ها: ${escapeHtml(project.skills.join("، "))}` : "",
     "",
-    "در صورت تأیید این آگهی، متن و مبلغ بید در یک پیام جدا برای تأیید نهایی ارسال می‌شود.",
-    `<a href="${escapeHtml(project.url)}">بازکردن آگهی</a>`
-  ].join("\n");
+    "برای بررسی و ارسال بید با اکستنشن، آگهی را باز کنید."
+  ].filter(Boolean).join("\n");
   const result = await telegram<{ message_id: number; chat: { id: number | string } }>("sendMessage", {
     chat_id: chatId,
     text,
     parse_mode: "HTML",
     disable_web_page_preview: true,
     reply_markup: {
-      inline_keyboard: [[
-        { text: "✅ تأیید آگهی", callback_data: callbackData("project_approve", record.id, token) },
-        { text: "❌ رد آگهی", callback_data: callbackData("project_reject", record.id, token) }
-      ]]
+      inline_keyboard: [[{ text: "🔗 باز کردن آگهی", url: project.url }]]
     }
   });
   return { chatId: String(result.chat.id), messageId: result.message_id, text: plainTelegramText(text) } satisfies TelegramDelivery;
