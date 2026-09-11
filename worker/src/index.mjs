@@ -7,7 +7,7 @@ import { normalizeProjectInspection } from "./project-normalizer.mjs";
 import { blockedRetryDelayMs, describeWorkerError } from "./runtime-policy.mjs";
 import { budgetAllowsApprovedPrice } from "./budget-policy.mjs";
 
-const VERSION = "0.6.2";
+const VERSION = "0.6.3";
 const root = path.resolve(import.meta.dirname, "../..");
 const dataDir = path.resolve(process.env.BROWSER_DATA_DIR || "/data");
 const panelUrl = String(process.env.PANEL_URL || "").replace(/\/$/, "");
@@ -168,6 +168,14 @@ async function persistContext(site) {
   } catch {}
 }
 
+async function releaseContext(site) {
+  const context = contexts.get(site);
+  if (!context) return;
+  await persistContext(site);
+  contexts.delete(site);
+  await context.close().catch(() => undefined);
+}
+
 async function withSiteLock(site, operation) {
   const previous = locks.get(site) || Promise.resolve();
   const current = previous.catch(() => undefined).then(operation);
@@ -233,11 +241,11 @@ async function scanSite(site) {
           await detailPage.close().catch(() => undefined);
         }
       }
-      await persistContext(site);
       if (sessionState[site] === "ready") await heartbeat("scanning", `${site}: session ready`, site);
       return candidates;
     } finally {
       await listingPage.close().catch(() => undefined);
+      await releaseContext(site);
     }
   });
 }
@@ -347,6 +355,7 @@ async function submitApproved(approval) {
       return true;
     } finally {
       await page.close().catch(() => undefined);
+      await releaseContext(site);
     }
   });
 }
