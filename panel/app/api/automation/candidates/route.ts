@@ -5,46 +5,13 @@ import { createReport } from "@/lib/reports";
 import { attachTelegramMessage, listBidApprovals, queueBidApproval, saveReport } from "@/lib/store";
 import { sendProjectApprovalRequest } from "@/lib/telegram";
 import type { BidApprovalRecord, ProjectRecord } from "@/lib/types";
+import { canonicalProjectUrl, comesFromBlockedCountry, projectFingerprint } from "@/lib/candidate-policy";
 
 export const runtime = "nodejs";
 
-function identityText(value = "") {
-  return String(value || "").toLowerCase().replace(/[يى]/g, "ی").replace(/ك/g, "ک").replace(/[^\p{L}\p{N}]+/gu, " ").replace(/\s+/g, " ").trim();
-}
-
-function canonicalUrl(value = "") {
-  try {
-    const url = new URL(value);
-    url.hash = "";
-    for (const key of [...url.searchParams.keys()]) {
-      if (/^(utm_.+|ref|source|from|campaign|tracking|fbclid|gclid)$/i.test(key)) url.searchParams.delete(key);
-    }
-    url.pathname = url.pathname.replace(/\/+$/, "") || "/";
-    return url.toString();
-  } catch {
-    return String(value || "").trim();
-  }
-}
-
 function duplicateProject(a: ProjectRecord, b: ProjectRecord) {
-  if (canonicalUrl(a.url) === canonicalUrl(b.url)) return true;
-  return identityText(a.site) === identityText(b.site)
-    && identityText(a.title).length >= 5
-    && identityText(a.title) === identityText(b.title);
-}
-
-function blockedCountry(project: ProjectRecord) {
-  const fields = project as ProjectRecord & Record<string, unknown>;
-  const location = [
-    fields.country,
-    fields.clientCountry,
-    fields.employerCountry,
-    fields.location,
-    fields.clientLocation,
-    fields.employerLocation,
-    fields.clientInfo
-  ].filter(Boolean).join(" ");
-  return /(?:^|[\s،,:;()\-])(پاکستان|بنگلادش|هند|pakistan|bangladesh|india|indian|pakistani|bangladeshi)(?=$|[\s،,:;()\-])/i.test(location);
+  return canonicalProjectUrl(a.url) === canonicalProjectUrl(b.url)
+    || (!!projectFingerprint(a) && projectFingerprint(a) === projectFingerprint(b));
 }
 
 export async function GET(req: NextRequest) {
@@ -59,7 +26,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid project notification" }, { status: 422 });
   }
 
-  if (blockedCountry(project)) return NextResponse.json({ created: false, skipped: "blocked_country" });
+  if (comesFromBlockedCountry(project)) return NextResponse.json({ created: false, skipped: "blocked_country" });
 
   const existing = (await listBidApprovals(250)).find((item) => duplicateProject(item.project, project));
   if (existing) return NextResponse.json({ approval: existing, created: false });

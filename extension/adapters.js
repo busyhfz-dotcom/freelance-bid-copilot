@@ -306,6 +306,13 @@
     return candidates.sort((a, b) => b.length - a.length)[0] || "";
   }
 
+  function clientCountry(client = "") {
+    const locations = [...document.querySelectorAll("[class*='client'] [class*='location'], [class*='employer'] [class*='location'], [class*='client'] [class*='country'], [data-testid*='client'] [data-testid*='location']")]
+      .filter(visible).map(text).join(" ");
+    const match = `${client}\n${locations}`.match(/\b(Pakistan|Bangladesh|India)\b|پاکستان|بنگلادش|هندوستان|هند/iu);
+    return match?.[0] || "";
+  }
+
   function setNativeValue(el, value) {
     const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
     const descriptor = Object.getOwnPropertyDescriptor(proto, "value");
@@ -538,6 +545,7 @@
       const comp = competitionSnapshot(bodyText);
       const price = proposal ? lockedField(a, proposal, "price") : null;
       const duration = proposal ? lockedField(a, proposal, "duration") : null;
+      const client = clientInfo();
       return {
         site: a.id,
         url: canonicalUrl(),
@@ -545,7 +553,8 @@
         description: bestDescription(a, contextual).slice(0, 10000),
         budget: findBudget(a, bodyText, contextual),
         skills: skills(a),
-        clientInfo: clientInfo(),
+        clientInfo: client,
+        clientCountry: clientCountry(client),
         proposalCount: comp.count,
         competitionLevel: comp.level,
         proposalCountSource: comp.source,

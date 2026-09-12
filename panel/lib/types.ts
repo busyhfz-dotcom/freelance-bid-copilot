@@ -10,6 +10,12 @@ export type ProjectPayload = {
   budget?: string;
   skills?: string[];
   clientInfo?: string;
+  country?: string;
+  clientCountry?: string;
+  clientLocation?: string;
+  employerCountry?: string;
+  employerLocation?: string;
+  location?: string;
   freelancerProfile?: string;
   preferredDomains?: string[];
   proposalCount?: number | null;

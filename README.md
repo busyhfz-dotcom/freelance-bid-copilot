@@ -1,4 +1,17 @@
-# Freelance Bid Copilot v0.6.2
+# Freelance Bid Copilot v0.7.2
+
+## v0.7.2 — Production consistency and bid safeguards
+
+- Keeps Telegram focused on fresh project-link notifications while the extension performs project-specific bid generation and guarded filling.
+- Enforces concise, varied proposals after model generation and replaces low-quality output with a safe local fallback.
+- Correctly parses Persian million/thousand budget shorthand and never recommends above the employer's stated ceiling.
+- Blocks employers from Pakistan, Bangladesh and India in the Worker, panel generation API, notification queue and extension.
+- Deduplicates by canonical URL plus a stable marketplace/title fingerprint, including extension history.
+- Aligns panel, Worker, desktop and extension versions and adds behavioral regression coverage.
+
+Validation: 98+ automated tests, Production build, TypeScript and JavaScript syntax checks.
+
+---
 
 ## v0.6.2 — Two-stage Telegram approval
 

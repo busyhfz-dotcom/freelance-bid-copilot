@@ -1,6 +1,9 @@
 import type { BidDecision, CompetitionLevel, ProjectPayload } from "./types";
 import { localDomainMatch, type DomainGate } from "./domain";
 import { decisionFor } from "./bid-policy";
+import { enforceProposalStyle, normalizeDigits, parseBudget, recommendedPriceForBudget } from "./bid-utils";
+
+export { enforceProposalStyle, parseBudget } from "./bid-utils";
 
 export type BidResult = {
   bid: string;
@@ -67,14 +70,6 @@ function bidTokens(value = "") {
   return new Set(normalized.split(/\s+/).filter((x) => x.length >= 2));
 }
 
-function normalizeDigits(value = "") {
-  return value
-    .replace(/[۰-۹]/g, (d) => String("۰۱۲۳۴۵۶۷۸۹".indexOf(d)))
-    .replace(/[٠-٩]/g, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d)))
-    .replace(/٬/g, ",")
-    .replace(/٫/g, ".");
-}
-
 function escapeRegExp(value: string) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -121,41 +116,8 @@ export function cleanProjectBrief(project: ProjectPayload) {
   return value.slice(0, 7000);
 }
 
-export function parseBudget(budget = "") {
-  const normalized = normalizeDigits(budget).replace(/,/g, "");
-  const nums = [...normalized.matchAll(/\d+(?:\.\d+)?/g)]
-    .map((m) => Number(m[0]))
-    .filter((n) => Number.isFinite(n) && n > 0);
-  const currency = budget.match(/(USD|EUR|GBP|\$|€|£|تومان|ریال)/i)?.[0] || "";
-  if (!nums.length) return { min: 0, max: 0, currency };
-  return { min: Math.min(...nums), max: Math.max(...nums), currency };
-}
-
-function roundCompetitive(value: number) {
-  const step = value >= 1_000_000 ? 50_000 : value >= 100_000 ? 10_000 : value >= 10_000 ? 1_000 : value >= 1000 ? 100 : 1;
-  return Math.round(value / step) * step;
-}
-
 export function recommendedPrice(project: ProjectPayload) {
-  const { min, max, currency } = parseBudget(project.budget || "");
-  if (!max) return "";
-
-  // v0.1.8: price inside the employer range, but adapt its position to competition.
-  // Wide budgets get a more conservative position because the upper bound is often aspirational.
-  const comp = competition(project);
-  const spreadRatio = min > 0 ? max / min : 1;
-  const wideRange = min > 0 && spreadRatio >= 3;
-  let position = 0.56;
-  if (comp.level === "low") position = wideRange ? 0.56 : 0.62;
-  else if (comp.level === "medium") position = wideRange ? 0.45 : 0.55;
-  else if (comp.level === "high") position = wideRange ? 0.34 : 0.44;
-
-  let value: number;
-  if (min && max > min) value = min + (max - min) * position;
-  else value = max * (comp.level === "high" ? 0.82 : comp.level === "medium" ? 0.86 : 0.90);
-
-  value = Math.max(min || 0, Math.min(max, roundCompetitive(value)));
-  return `${value.toLocaleString("en-US")} ${currency}`.trim();
+  return recommendedPriceForBudget(project.budget || "", competition(project).level);
 }
 
 export function recommendedDuration(project: ProjectPayload) {
@@ -190,7 +152,7 @@ function budgetFit(budget: string, price: string) {
   const b = parseBudget(budget);
   const p = parseBudget(price).max;
   if (!b.max || !p) return { score: 50, within: false };
-  const within = p >= (b.min || 0) && p <= b.max;
+  const within = b.min === b.max ? p > 0 && p <= b.max : p >= (b.min || 0) && p <= b.max;
   if (!within) return { score: 10, within: false };
   if (b.min && b.max > b.min) {
     const position = (p - b.min) / (b.max - b.min);
@@ -391,7 +353,9 @@ export async function generateBid(project: ProjectPayload): Promise<BidResult> {
     const parsed = parseAI(extractResponseText(await response.json()));
     if (!parsed?.proposal || typeof parsed.proposal !== "string") return fallback;
     const aiDuration = /^\d{1,2}$/.test(String(parsed.durationDays || "")) ? String(parsed.durationDays) : duration;
-    return scoreResult(project, parsed.proposal.trim(), cleanedBrief, price, aiDuration);
+    const proposal = enforceProposalStyle(parsed.proposal);
+    const scored = scoreResult(project, proposal, cleanedBrief, price, aiDuration);
+    return scored.bidQualityScore >= 70 ? scored : fallback;
   } catch {
     return fallback;
   } finally {

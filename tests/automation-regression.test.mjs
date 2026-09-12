@@ -38,10 +38,11 @@ test("new project notifications require only valid marketplace identity", () => 
   assert.doesNotMatch(candidates, /AUTOMATION_MIN_SCORE/);
 });
 
-test("notification delivery is deduplicated by project URL", () => {
+test("notification delivery is deduplicated by canonical URL and title fingerprint", () => {
   const candidates = read("panel/app/api/automation/candidates/route.ts");
   const store = read("panel/lib/store.ts");
-  assert.match(candidates, /item\.url === project\.url/);
+  assert.match(candidates, /canonicalProjectUrl/);
+  assert.match(candidates, /projectFingerprint/);
   assert.match(store, /ON CONFLICT \(url\) DO NOTHING/);
 });
 
@@ -194,7 +195,8 @@ test("proposal strategy rejects repetitive AI-template sections", () => {
   assert.match(bid, /Asset Libraries/);
   assert.match(bid, /Project Roadmap/);
   assert.match(bid, /Reassuring Facts/);
-  assert.match(bid, /never more than 4 short paragraphs/);
+  assert.match(bid, /2-4 compact paragraphs/);
+  assert.match(bid, /enforceProposalStyle/);
   assert.match(bid, /max_output_tokens: 350/);
 });
 
@@ -203,27 +205,22 @@ test("dashboard exposes Worker health and Telegram approval queue", () => {
   assert.match(page, /mode === "automation"/);
   assert.match(page, /\/api\/automation\/heartbeat/);
   assert.match(page, /\/api\/automation\/candidates/);
-  assert.match(page, /TWO-STAGE TELEGRAM APPROVAL/);
+  assert.match(page, /TELEGRAM PROJECT ALERTS/);
 });
 
-test("reports persist scans and the complete Telegram decision lifecycle", () => {
+test("reports persist scans and Telegram project notifications", () => {
   const reportsRoute = read("panel/app/api/reports/route.ts");
   const page = read("panel/app/page.tsx");
   const worker = read("worker/src/index.mjs");
   const candidates = read("panel/app/api/automation/candidates/route.ts");
-  const webhook = read("panel/app/api/telegram/webhook/route.ts");
-  const result = read("panel/app/api/automation/result/route.ts");
   assert.match(reportsRoute, /isWorkerAuthorized/);
   assert.match(reportsRoute, /listReports/);
   assert.match(page, /ViewMode = "reports"/);
   assert.match(page, /fetch\("\/api\/reports"/);
   assert.match(page, /گزارشات زنده اسکن و تلگرام/);
   assert.match(worker, /eventType: "scan_completed"/);
-  assert.match(candidates, /eventType: "approval_sent"/);
-  assert.match(webhook, /"bid_review_sent"/);
-  assert.match(webhook, /"bid_approved"/);
-  assert.match(webhook, /"project_rejected"/);
-  assert.match(result, /eventType: "submission_result"/);
+  assert.match(candidates, /eventType: "new_project_sent"/);
+  assert.match(candidates, /eventType: "new_project_delivery_failed"/);
 });
 
 test("Worker storage-state credentials are explicitly excluded from source control", () => {

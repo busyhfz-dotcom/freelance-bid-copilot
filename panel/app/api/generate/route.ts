@@ -4,6 +4,7 @@ import { isAuthorized } from "@/lib/auth";
 import { generateBid } from "@/lib/bid";
 import { saveProject } from "@/lib/store";
 import type { ProjectPayload, ProjectRecord } from "@/lib/types";
+import { comesFromBlockedCountry } from "@/lib/candidate-policy";
 
 export const runtime = "nodejs";
 
@@ -27,6 +28,9 @@ export async function POST(req: NextRequest) {
   const project = (await req.json()) as ProjectPayload;
   if (!project?.title || !project?.url) {
     return NextResponse.json({ error: "Missing title or URL" }, { status: 400, headers: cors() });
+  }
+  if (comesFromBlockedCountry(project)) {
+    return NextResponse.json({ error: "Projects from blocked client countries are not accepted" }, { status: 422, headers: cors() });
   }
   project.description = project.description || "";
 

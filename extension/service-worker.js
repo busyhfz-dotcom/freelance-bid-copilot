@@ -1,6 +1,6 @@
 importScripts("domain-engine.js", "guard-policy.js");
 
-const ENGINE_VERSION = "0.7.1";
+const ENGINE_VERSION = "0.7.2";
 
 const DEFAULTS = {
   panelUrl: "https://www.freelancerpanel.ir",
@@ -46,11 +46,12 @@ async function generate(project) { const s = await settings(); const data = awai
 async function markStatus(url, status) { try { await panelRequest("/api/projects", { method: "PATCH", body: JSON.stringify({ url, status }) }); } catch {} }
 
 function keyFor(url = "") { try { const u = new URL(url); u.hash = ""; for (const key of [...u.searchParams.keys()]) if (/^(utm_.+|ref|source|from|campaign|tracking|fbclid|gclid)$/i.test(key)) u.searchParams.delete(key); u.pathname = u.pathname.replace(/\/+$/, "") || "/"; return u.toString(); } catch { return String(url || "").trim(); } }
-function blockedCountry(item = {}) { const location = [item.country, item.clientCountry, item.employerCountry, item.location, item.clientLocation, item.employerLocation, item.clientInfo].filter(Boolean).join(" "); return /(?:^|[\s،,:;()\-])(پاکستان|بنگلادش|هند|pakistan|bangladesh|india|indian|pakistani|bangladeshi)(?=$|[\s،,:;()\-])/i.test(location); }
+function titleKey(item = {}) { return `${String(item.site || "").toLowerCase()}:${String(item.title || "").toLowerCase().replace(/[يى]/g, "ی").replace(/ك/g, "ک").replace(/[^\p{L}\p{N}]+/gu, " ").trim()}`; }
+function blockedCountry(item = {}) { const location = [item.country, item.clientCountry, item.employerCountry, item.location, item.clientLocation, item.employerLocation, item.clientInfo].filter(Boolean).join(" "); return /(?:^|[\s،,:;()\-])(پاکستان|بنگلادش|هندوستان|هند|pakistan|bangladesh|india|indian|pakistani|bangladeshi)(?=$|[\s،,:;()\-])/i.test(location); }
 async function history() { return (await chrome.storage.local.get({ bidHistory: {} })).bidHistory || {}; }
-async function setHistory(url, status) { const h = await history(); h[keyFor(url)] = { status, at: new Date().toISOString() }; await chrome.storage.local.set({ bidHistory: h }); }
-async function duplicate(url) { const h = await history(); return h[keyFor(url)] || null; }
-async function resetGuard(url) { const h = await history(); delete h[keyFor(url)]; await chrome.storage.local.set({ bidHistory: h }); }
+async function setHistory(item, status) { const h = await history(); const entry = { status, at: new Date().toISOString() }; h[keyFor(item.url)] = entry; if (titleKey(item)) h[titleKey(item)] = entry; await chrome.storage.local.set({ bidHistory: h }); }
+async function duplicate(item) { const h = await history(); return h[keyFor(item.url)] || h[titleKey(item)] || null; }
+async function resetGuard(item) { const h = await history(); delete h[keyFor(item.url)]; delete h[titleKey(item)]; await chrome.storage.local.set({ bidHistory: h }); }
 
 function roughMatch(item, s) {
   return self.CopilotDomain.matchProject(item, s.freelancerProfile || "", s.preferredDomains || []);
@@ -79,13 +80,19 @@ function scanDecision(score, prior, matchScore, domainGate) {
 async function rankScannedProjects(scan) {
   const s = await settings();
   const h = await history();
-  const ranked = (scan.items || []).filter((item) => !blockedCountry(item)).map((item) => {
+  const unique = new Map();
+  for (const item of scan.items || []) {
+    if (blockedCountry(item)) continue;
+    const identity = titleKey(item) || keyFor(item.url);
+    if (!unique.has(identity)) unique.set(identity, item);
+  }
+  const ranked = [...unique.values()].map((item) => {
     const match = roughMatch(item, s);
     const matchScore = Number.isFinite(match.score) ? match.score : 50;
     const fresh = freshnessScore(item.ageText || "");
     const brief = (item.snippet || "").length >= 180 ? 90 : (item.snippet || "").length >= 90 ? 78 : 58;
     const budget = item.budget ? 88 : 52;
-    const prior = h[keyFor(item.url)] || null;
+    const prior = h[keyFor(item.url)] || h[titleKey(item)] || null;
     let scoutScore = Math.round(matchScore * 0.74 + fresh * 0.12 + brief * 0.07 + budget * 0.07);
     if (match.domainGate === "blocked") scoutScore = Math.min(scoutScore, 39);
     else if (match.domainGate === "related" || match.domainGate === "unknown") scoutScore = Math.min(scoutScore, 64);
@@ -124,7 +131,7 @@ async function nextQueueItem(currentUrl = "") {
   const rank = { OPEN: 0, REVIEW: 1, SKIP: 2, DONE: 3 };
   const candidates = scanQueue.items
     .filter((item) => keyFor(item.url) !== current)
-    .filter((item) => !item.reviewedAt && !h[keyFor(item.url)])
+    .filter((item) => !item.reviewedAt && !h[keyFor(item.url)] && !h[titleKey(item)])
     .filter((item) => item.queueDecision === "OPEN" || item.queueDecision === "REVIEW")
     .sort((a, b) => (rank[a.queueDecision] ?? 9) - (rank[b.queueDecision] ?? 9) || (b.scoutScore || 0) - (a.scoutScore || 0));
   return candidates[0] || null;
@@ -186,16 +193,16 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         const fillBlock = self.CopilotGuard.fillBlockReason(item); if (fillBlock) throw new Error(fillBlock);
         const inspected = await tabMessage("INSPECT"); if (!inspected?.ok) throw new Error("صفحه پروژه خوانده نشد.");
         if (keyFor(item.url) !== keyFor(inspected.project.url)) throw new Error("بید تولیدشده مربوط به پروژه دیگری است.");
-        const dup = await duplicate(item.url); if (dup) throw new Error("این پروژه قبلاً توسط افزونه Fill/Submit شده؛ اگر عمدی است Reset guard را بزن.");
+        const dup = await duplicate(item); if (dup) throw new Error("این پروژه قبلاً توسط افزونه Fill/Submit شده؛ اگر عمدی است Reset guard را بزن.");
         const s = await settings(); const formProject = await ensureProposalForm();
         const fill = await tabMessage("FILL", { bid: item.bid, price: item.recommendedPrice || "", duration: s.defaultDuration || item.recommendedDuration || "" });
         if (!fill?.ok) throw new Error(fill?.reason || "فرم پر نشد.");
         let submitted = false, autoBlocked = [];
         if (s.autoSubmit) { autoBlocked = autoGuard(item, s, formProject, null); if (!autoBlocked.length) { const sub = await tabMessage("SUBMIT"); if (!sub?.ok) throw new Error(sub?.reason || "ارسال نهایی انجام نشد."); submitted = true; } }
-        await setHistory(item.url, submitted ? "submitted" : "filled"); await markStatus(item.url, submitted ? "submitted" : "filled");
+        await setHistory(item, submitted ? "submitted" : "filled"); await markStatus(item.url, submitted ? "submitted" : "filled");
         sendResponse({ ok: true, result: item, fill, submitted, autoBlocked }); return;
       }
-      if (message.type === "COPILOT_RESET_GUARD") { const i = await tabMessage("INSPECT"); if (i?.ok) await resetGuard(i.project.url); sendResponse({ ok: true }); return; }
+      if (message.type === "COPILOT_RESET_GUARD") { const i = await tabMessage("INSPECT"); if (i?.ok) await resetGuard(i.project); sendResponse({ ok: true }); return; }
       sendResponse({ ok: false, reason: "Unknown action" });
     } catch (e) { sendResponse({ ok: false, reason: e?.message || String(e) }); }
   })();
