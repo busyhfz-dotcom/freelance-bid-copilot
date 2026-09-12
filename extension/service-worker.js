@@ -1,6 +1,6 @@
 importScripts("domain-engine.js", "guard-policy.js");
 
-const ENGINE_VERSION = "0.6.2";
+const ENGINE_VERSION = "0.7.1";
 
 const DEFAULTS = {
   panelUrl: "https://www.freelancerpanel.ir",
@@ -45,7 +45,8 @@ async function panelRequest(path, options = {}) {
 async function generate(project) { const s = await settings(); const data = await panelRequest("/api/generate", { method: "POST", body: JSON.stringify({ ...project, freelancerProfile: s.freelancerProfile || "", preferredDomains: s.preferredDomains || [], capturedAt: new Date().toISOString() }) }); data.engineVersion = ENGINE_VERSION; await chrome.storage.local.set({ latestGenerated: data }); return data; }
 async function markStatus(url, status) { try { await panelRequest("/api/projects", { method: "PATCH", body: JSON.stringify({ url, status }) }); } catch {} }
 
-function keyFor(url = "") { try { const u = new URL(url); u.hash = ""; return u.toString(); } catch { return url; } }
+function keyFor(url = "") { try { const u = new URL(url); u.hash = ""; for (const key of [...u.searchParams.keys()]) if (/^(utm_.+|ref|source|from|campaign|tracking|fbclid|gclid)$/i.test(key)) u.searchParams.delete(key); u.pathname = u.pathname.replace(/\\/+$/, "") || "/"; return u.toString(); } catch { return String(url || "").trim(); } }
+function blockedCountry(item = {}) { const location = [item.country, item.clientCountry, item.employerCountry, item.location, item.clientLocation, item.employerLocation, item.clientInfo].filter(Boolean).join(" "); return /(?:^|[\\s،,:;()\\-])(پاکستان|بنگلادش|هند|pakistan|bangladesh|india|indian|pakistani|bangladeshi)(?=$|[\\s،,:;()\\-])/i.test(location); }
 async function history() { return (await chrome.storage.local.get({ bidHistory: {} })).bidHistory || {}; }
 async function setHistory(url, status) { const h = await history(); h[keyFor(url)] = { status, at: new Date().toISOString() }; await chrome.storage.local.set({ bidHistory: h }); }
 async function duplicate(url) { const h = await history(); return h[keyFor(url)] || null; }
@@ -78,7 +79,7 @@ function scanDecision(score, prior, matchScore, domainGate) {
 async function rankScannedProjects(scan) {
   const s = await settings();
   const h = await history();
-  const ranked = (scan.items || []).map((item) => {
+  const ranked = (scan.items || []).filter((item) => !blockedCountry(item)).map((item) => {
     const match = roughMatch(item, s);
     const matchScore = Number.isFinite(match.score) ? match.score : 50;
     const fresh = freshnessScore(item.ageText || "");
@@ -174,6 +175,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       if (message.type === "COPILOT_GENERATE") {
         const i = await tabMessage("INSPECT");
         if (!i?.ok) throw new Error(i?.reason || "صفحه خوانده نشد");
+        if (blockedCountry(i.project)) throw new Error("این پروژه به‌دلیل کشور کارفرما از صف بیدگذاری حذف شده است.");
         const result = await generate(i.project);
         await markQueueReviewed(i.project.url, result);
         sendResponse({ ok: true, result }); return;
