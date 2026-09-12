@@ -7,7 +7,7 @@ import { normalizeProjectInspection } from "./project-normalizer.mjs";
 import { blockedRetryDelayMs, describeWorkerError } from "./runtime-policy.mjs";
 import { budgetAllowsApprovedPrice } from "./budget-policy.mjs";
 
-const VERSION = "0.7.0";
+const VERSION = "0.7.1";
 const root = path.resolve(import.meta.dirname, "../..");
 const dataDir = path.resolve(process.env.BROWSER_DATA_DIR || "/data");
 const panelUrl = String(process.env.PANEL_URL || "").replace(/\/$/, "");
@@ -59,6 +59,57 @@ function clamp(value, fallback, min, max) {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function normalizedIdentityText(value = "") {
+  return String(value || "").toLowerCase().replace(/[يى]/g, "ی").replace(/ك/g, "ک").replace(/[^\p{L}\p{N}]+/gu, " ").replace(/\s+/g, " ").trim();
+}
+
+function canonicalProjectUrl(value = "") {
+  try {
+    const url = new URL(value);
+    url.hash = "";
+    for (const key of [...url.searchParams.keys()]) {
+      if (/^(utm_.+|ref|source|from|campaign|tracking|fbclid|gclid)$/i.test(key)) url.searchParams.delete(key);
+    }
+    url.pathname = url.pathname.replace(/\/+$/, "") || "/";
+    return url.toString();
+  } catch {
+    return String(value || "").trim();
+  }
+}
+
+function projectIdentityKeys(project = {}) {
+  const rawUrl = String(project.url || "").trim();
+  const canonicalUrl = canonicalProjectUrl(rawUrl);
+  const title = normalizedIdentityText(project.title || "");
+  const site = normalizedIdentityText(project.site || "");
+  return [...new Set([
+    rawUrl,
+    canonicalUrl,
+    title.length >= 5 ? `title:${site}:${title}` : ""
+  ].filter(Boolean))];
+}
+
+function isBlockedCountryProject(project = {}) {
+  const explicitLocation = [
+    project.country,
+    project.clientCountry,
+    project.employerCountry,
+    project.location,
+    project.clientLocation,
+    project.employerLocation,
+    project.clientInfo
+  ].filter(Boolean).join(" ");
+  return /(?:^|[\s،,:;()\-])(پاکستان|بنگلادش|هند|pakistan|bangladesh|india|indian|pakistani|bangladeshi)(?=$|[\s،,:;()\-])/i.test(explicitLocation);
+}
+
+function wasSeen(project = {}) {
+  return projectIdentityKeys(project).some((key) => seen.has(key));
+}
+
+function markSeen(project = {}) {
+  for (const key of projectIdentityKeys(project)) seen.add(key);
 }
 
 async function fileExists(file) {
@@ -204,7 +255,7 @@ async function scanSite(site) {
       sessionState[site] = "ready";
       await injectAdapters(listingPage);
       const listing = await listingPage.evaluate(() => window.BidCopilotAdapter.scanList());
-      const freshItems = (listing?.items || []).filter((item) => item.url && !seen.has(item.url)).slice(0, inspectLimit);
+      const freshItems = (listing?.items || []).filter((item) => item.url && !wasSeen({ ...item, site })).slice(0, inspectLimit);
       for (const item of freshItems) {
         const detailPage = await context.newPage();
         try {
@@ -224,6 +275,12 @@ async function scanSite(site) {
             currentUrl: detailPage.url()
           });
           if (!inspected.title || !inspected.url) throw new Error("Inspection missing title or URL after listing fallback");
+          if (isBlockedCountryProject(inspected)) {
+            markSeen(inspected);
+            console.log(`skip ${site} ${inspected.url}: blocked employer country`);
+            continue;
+          }
+          if (wasSeen(inspected)) continue;
           candidates.push({
             ...inspected,
             capturedAt: new Date().toISOString(),
@@ -257,7 +314,7 @@ async function scanCycle() {
     try {
       const result = await api("/api/automation/candidates", { body: project });
       if (result.created) queuedCount += 1;
-      seen.add(project.url);
+      markSeen(project);
     } catch (error) {
       queueFailures += 1;
       console.error("queue candidate:", error.message);
