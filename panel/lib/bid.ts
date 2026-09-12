@@ -29,9 +29,10 @@ export type BidResult = {
 const SYSTEM = `You are a freelance bid strategist. Return one concise, human, project-specific proposal.
 
 Proposal rules:
-- Usually 2 short paragraphs; never more than 4 short paragraphs.
+- Use the supplied voiceBlueprint as a creative constraint. Vary sentence length, paragraph count (1-3), opening angle, and closing style across proposals.
+- Never reuse a stock opening or a signature closing. Do not force a question or milestone request when a direct ending sounds more natural.
 - Do NOT start with greetings or generic phrases such as "I would love to help", "I would be thrilled", "با سلام", or "انجام می‌دهم".
-- The first sentence must address the actual deliverable.
+- The opening must address a concrete detail, risk, decision, or outcome from this specific project—not merely restate its title.
 - Focus on the result, solution, and one concrete execution idea. Do not list tools unless the brief explicitly makes them relevant.
 - Do not use headings, boilerplate sections, or AI-template labels. In particular never write sections such as "Tools & Software Stack", "Asset Libraries", "Project Roadmap", "Reassuring Facts", "مراحل پروژه", or "ابزارهای مورد استفاده".
 - Prefer a fast first reviewable delivery for simple work. Do not promise an unrealistic deadline.
@@ -232,22 +233,47 @@ function bidQuality(project: ProjectPayload, proposal: string, brief: string) {
   return Math.max(0, Math.min(98, score));
 }
 
-function fallbackProposal(project: ProjectPayload, brief: string) {
+const VOICE_BLUEPRINTS = [
+  "Direct and practical: open with the key deliverable, give one specific execution choice, and end decisively without a question.",
+  "Consultative and conversational: open with the main trade-off you noticed, explain how you would handle it, and ask one genuinely useful question.",
+  "Outcome-first: open with the result the client should see, connect it to one concrete action, and close with a low-friction next step.",
+  "Detail-led: open with one non-obvious detail from the brief, show why it matters, and keep the ending short and confident.",
+  "Risk-aware: open with the likely failure point, explain a simple prevention plan, and finish by proposing the first reviewable checkpoint.",
+  "Lean and informal: use one compact paragraph with natural contractions or conversational Persian; no formal pitch language.",
+  "Collaborative: frame the work as a quick shared decision followed by execution; use varied sentence lengths and no salesy closing.",
+  "Technical only where useful: mention one implementation decision tied to the brief, translate it into client value, and end without boilerplate."
+] as const;
+
+function proposalVariation(project: ProjectPayload) {
+  const seed = `${project.url || project.title}:${Date.now()}:${Math.random()}`;
+  let hash = 2166136261;
+  for (let i = 0; i < seed.length; i += 1) {
+    hash ^= seed.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  const index = Math.abs(hash) % VOICE_BLUEPRINTS.length;
+  return { blueprint: VOICE_BLUEPRINTS[index], nonce: Math.abs(hash).toString(36) };
+}
+
+function fallbackProposal(project: ProjectPayload, brief: string, variantIndex = 0) {
   const persian = /[\u0600-\u06FF]/.test(`${project.title} ${brief}`);
-  const haystack = `${project.title} ${brief}`.toLowerCase();
   const title = clean(project.title);
+  const detail = clean(brief).slice(0, 150);
 
-  if (persian && /هوم\s*پیج|صفحه\s*اصلی|landing\s*page|homepage/.test(haystack)) {
-    return `برای ${title}، تمرکزم روی ساختار قابل‌اعتماد، نمایش واضح خدمات و مسیر مشخص برای اقدام کاربر خواهد بود. ابتدا نسخه اولیه را آماده می‌کنم تا جهت کلی طراحی تأیید شود و بعد از بازخورد شما نسخه نهایی را تکمیل می‌کنم.\n\nاگر لینک سایت فعلی و یک یا دو نمونه مرجع که سبکشان را می‌پسندید بفرستید، می‌توانم طراحی را دقیق‌تر و سریع‌تر شروع کنم.`;
-  }
-
-  if (persian) {
-    const specific = brief && brief.length > 30 ? `برای ${title}، خروجی را بر اساس نیاز اصلی پروژه متمرکز می‌کنم` : `برای ${title}`;
-    return `${specific} تا نسخه اولیه سریع قابل بررسی باشد و اصلاحات روی همان مسیر انجام شود.\n\nاگر یک نمونه مرجع یا مهم‌ترین محدودیت اجرایی را بفرستید، می‌توانم محدوده کار و تحویل را دقیق‌تر نهایی کنم.`;
-  }
-
-  const specific = brief && brief.length > 30 ? brief.slice(0, 180) : project.title;
-  return `For ${project.title}, I’ll keep the work focused on the core deliverable and get an early reviewable version in front of you first so refinements stay targeted.\n\nIf you can share one reference and the most important constraint, I can lock the scope and delivery more precisely.`;
+  const fa = [
+    `برای «${title}» بهتر است اول بخش تعیین‌کننده را جمع کنیم و یک نسخه کوتاهِ قابل بررسی تحویل بدهم؛ این‌طوری اصلاحات از همان ابتدا روی مسیر درست انجام می‌شود.${detail ? ` نکته‌ای که از توضیحات شما گرفتم این است: ${detail}.` : ""}`,
+    `خروجی این پروژه را می‌شود بدون رفت‌وبرگشت اضافه جلو برد: ابتدا یک نمونه واقعی از بخش اصلی آماده می‌کنم، بازخورد شما را می‌گیرم و همان مسیر را برای تحویل نهایی ادامه می‌دهم.${detail ? ` تمرکز اولیه‌ام روی ${detail} خواهد بود.` : ""}`,
+    `به‌نظرم نقطه حساس «${title}» این است که نتیجه از همان نسخه اول قابل قضاوت باشد. کار را با یک خروجی کوچک اما واقعی شروع می‌کنم تا درباره جزئیات اجرایی براساس نمونه تصمیم بگیریم، نه توضیح کلی.`,
+    `برای این کار پیشنهاد می‌کنم مستقیم سراغ بخش اصلی برویم و نسخه اولیه را زود روی میز بگذاریم. اگر محدودیت یا مرجع مشخصی دارید بفرستید؛ وگرنه طراحی مسیر اجرا را از نیازهای همین آگهی جمع‌بندی می‌کنم.`
+  ];
+  const en = [
+    `The useful first step for ${title} is a small, real deliverable you can review—not a long planning phase. I’ll use that feedback to keep the final pass focused.`,
+    `I’d start with the part of ${title} that carries the most risk, turn it into an early reviewable version, and refine from evidence rather than assumptions.`,
+    `This can move quickly if we lock the core outcome first. I’ll prepare the initial working pass, incorporate one focused round of feedback, and keep the remaining delivery tight.`,
+    `For ${title}, I’d go straight to the main deliverable and make the first pass concrete enough to judge. Share the one constraint that matters most, and I’ll shape the execution around it.`
+  ];
+  const variants = persian ? fa : en;
+  return variants[Math.abs(variantIndex) % variants.length];
 }
 
 function extractResponseText(data: any): string {
@@ -315,7 +341,8 @@ export async function generateBid(project: ProjectPayload): Promise<BidResult> {
   const cleanedBrief = cleanProjectBrief(project);
   const price = recommendedPrice(project);
   const duration = recommendedDuration(project);
-  const fallbackBid = fallbackProposal(project, cleanedBrief);
+  const variation = proposalVariation(project);
+  const fallbackBid = fallbackProposal(project, cleanedBrief, Number.parseInt(variation.nonce.slice(-2), 36) || 0);
   const fallback = scoreResult(project, fallbackBid, cleanedBrief, price, duration);
 
   const apiKey = process.env.OPENAI_API_KEY;
@@ -337,7 +364,10 @@ export async function generateBid(project: ProjectPayload): Promise<BidResult> {
             title: clean(project.title),
             brief: cleanedBrief || "The client provided almost no detail beyond the project title.",
             skills: project.skills || [],
-            locallyRecommendedDurationDays: duration
+            locallyRecommendedDurationDays: duration,
+            voiceBlueprint: variation.blueprint,
+            variationSeed: variation.nonce,
+            originalityReminder: "Write from the project details; avoid reusable freelancer-pitch phrasing and do not echo prior structural patterns."
           }) }] }
         ],
         max_output_tokens: 350
