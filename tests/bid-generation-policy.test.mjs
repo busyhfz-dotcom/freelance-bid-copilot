@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { enforceProposalStyle, parseBudget, recommendedPriceForBudget } from "../panel/lib/bid-utils.ts";
 import { canonicalProjectUrl, comesFromBlockedCountry, projectFingerprint } from "../panel/lib/candidate-policy.ts";
+import { createProjectFingerprint } from "../panel/lib/project-fingerprint.ts";
+import { bidSimilarityScore, shouldRegenerateBid } from "../panel/lib/bid-similarity-guard.ts";
 
 const project = {
   site: "ponisha",
@@ -41,4 +43,18 @@ test("panel canonical URL and title fingerprint suppress tracking variants and r
     projectFingerprint({ site: "ponisha", title: " طراحی‌ رابط کاربری " }),
     projectFingerprint({ site: "ponisha", title: "طراحی رابط کاربری" })
   );
+});
+
+test("project fingerprint captures deliverable, domain, constraints, intent and unique signals", () => {
+  const fp = createProjectFingerprint({ title: "طراحی داشبورد فروش", description: "نمودارهای فروش و نسخه موبایل با تحویل نمونه اولیه", skills: ["Figma"] });
+  assert.equal(fp.domain, "design");
+  assert.equal(fp.constraints[0], "Figma");
+  assert.ok(fp.deliverable && fp.intent && fp.uniqueSignals.length > 0);
+});
+
+test("similarity guard detects repeated wording", () => {
+  const previous = [{ proposal: "برای طراحی داشبورد ابتدا نسخه اولیه قابل بررسی آماده می‌کنم و بعد اصلاحات را اعمال می‌کنم." }];
+  const repeated = "برای طراحی داشبورد ابتدا نسخه اولیه قابل بررسی آماده می‌کنم و بعد اصلاحات را اعمال می‌کنم.";
+  assert.equal(shouldRegenerateBid(repeated, previous), true);
+  assert.ok(bidSimilarityScore("یک پیشنهاد کاملاً متفاوت برای ترجمه مقاله آماده می‌کنم.", previous) < 0.72);
 });

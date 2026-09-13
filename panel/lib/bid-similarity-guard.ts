@@ -1,16 +1,7 @@
-type BidMemoryItem = {
-  proposal?: string;
-  title?: string;
-  createdAt?: string;
-};
+export type BidMemoryItem = { proposal?: string; title?: string; createdAt?: string };
 
 function normalizeText(value = "") {
-  return String(value)
-    .toLowerCase()
-    .replace(/[يى]/g, "ی")
-    .replace(/ك/g, "ک")
-    .replace(/[^\p{L}\p{N}]+/gu, " ")
-    .trim();
+  return String(value).toLowerCase().replace(/[يى]/g, "ی").replace(/ك/g, "ک").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
 }
 
 function tokens(value = "") {
@@ -20,19 +11,14 @@ function tokens(value = "") {
 function overlap(a: Set<string>, b: Set<string>) {
   if (!a.size || !b.size) return 0;
   let common = 0;
-  for (const item of a) if (b.has(item)) common++;
+  for (const item of a) if (b.has(item)) common += 1;
   return common / Math.max(a.size, b.size);
 }
 
 export function bidSimilarityScore(current: string, previous: BidMemoryItem[]) {
   const currentTokens = tokens(current);
   let max = 0;
-
-  for (const item of previous || []) {
-    const previousTokens = tokens(item.proposal || "");
-    max = Math.max(max, overlap(currentTokens, previousTokens));
-  }
-
+  for (const item of previous || []) max = Math.max(max, overlap(currentTokens, tokens(item.proposal || "")));
   return Number(max.toFixed(3));
 }
 
@@ -41,11 +27,5 @@ export function shouldRegenerateBid(current: string, previous: BidMemoryItem[], 
 }
 
 export function buildUniqueBidInstruction(projectTitle: string, projectDescription: string) {
-  return `Analyze this project independently. Do not reuse wording, structure, opening, or examples from previous bids. This proposal must be derived from this project's exact deliverables, constraints, and expected outcome.
-
-Project fingerprint:
-Title: ${projectTitle}
-Brief: ${projectDescription.slice(0, 1200)}
-
-Create a proposal that could not be sent unchanged to another project.`;
+  return `Analyze this project independently. Do not reuse wording, structure, opening, or examples from previous bids. This proposal must be derived from this project's exact deliverables, constraints, and expected outcome.\n\nProject fingerprint:\nTitle: ${projectTitle}\nBrief: ${projectDescription.slice(0, 1200)}\n\nCreate a proposal that could not be sent unchanged to another project.`;
 }

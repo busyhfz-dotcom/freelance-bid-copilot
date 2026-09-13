@@ -23,6 +23,8 @@ export type ProjectPayload = {
   proposalCountSource?: "explicit" | "visible_cards" | "section_signals" | "unknown";
   competitionConfidence?: "high" | "medium" | "low";
   capturedAt?: string;
+  /** Previously generated proposals used to prevent repetitive output. */
+  previousBids?: Array<{ proposal?: string; title?: string; createdAt?: string }>;
 };
 
 export type ProjectRecord = ProjectPayload & {

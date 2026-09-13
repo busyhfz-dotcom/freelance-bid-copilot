@@ -2,6 +2,8 @@ import type { BidDecision, CompetitionLevel, ProjectPayload } from "./types";
 import { localDomainMatch, type DomainGate } from "./domain";
 import { decisionFor } from "./bid-policy";
 import { enforceProposalStyle, normalizeDigits, parseBudget, recommendedPriceForBudget } from "./bid-utils";
+import { createProjectFingerprint, fingerprintInstruction } from "./project-fingerprint";
+import { buildUniqueBidInstruction, shouldRegenerateBid, type BidMemoryItem } from "./bid-similarity-guard";
 
 export { enforceProposalStyle, parseBudget } from "./bid-utils";
 
@@ -311,22 +313,31 @@ function scoreResult(project: ProjectPayload, bid: string, cleanedBrief: string,
   };
 }
 
-export async function generateBid(project: ProjectPayload): Promise<BidResult> {
+export async function generateBid(project: ProjectPayload, previousBids: BidMemoryItem[] = project.previousBids || []): Promise<BidResult> {
   const cleanedBrief = cleanProjectBrief(project);
   const price = recommendedPrice(project);
   const duration = recommendedDuration(project);
   const variation = proposalVariation(project);
   const fallbackBid = fallbackProposal(project, cleanedBrief, Number.parseInt(variation.nonce.slice(-2), 36) || 0);
   const fallback = scoreResult(project, fallbackBid, cleanedBrief, price, duration);
+  const fallbackCandidates = [0, 1, 2, 3].map((index) => scoreResult(project, fallbackProposal(project, cleanedBrief, index), cleanedBrief, price, duration));
+  const safeFallback = fallbackCandidates
+    .filter((candidate) => !shouldRegenerateBid(candidate.bid, previousBids))
+    .sort((a, b) => b.bidQualityScore - a.bidQualityScore)[0] || fallback;
 
   const apiKey = process.env.OPENAI_API_KEY;
   const model = process.env.OPENAI_MODEL;
-  if (!apiKey || !model) return fallback;
+  if (!apiKey || !model) return safeFallback;
 
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 30_000);
-  try {
-    const response = await fetch("https://api.openai.com/v1/responses", {
+  const fingerprint = createProjectFingerprint({ title: project.title, description: cleanedBrief, skills: project.skills });
+  const uniqueInstruction = buildUniqueBidInstruction(project.title, cleanedBrief || project.description || "");
+  let lastScored: BidResult | null = null;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const variation = proposalVariation({ ...project, url: `${project.url}#attempt-${attempt}` });
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 30_000);
+    try {
+      const response = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
       headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -342,23 +353,29 @@ export async function generateBid(project: ProjectPayload): Promise<BidResult> {
             locallyRecommendedDurationDays: duration,
             voiceBlueprint: variation.blueprint,
             variationSeed: variation.nonce,
-            originalityReminder: "Write from the project details; avoid reusable freelancer-pitch phrasing and do not echo prior structural patterns."
+            projectFingerprint: fingerprint,
+            fingerprintInstruction: fingerprintInstruction(fingerprint),
+            originalityReminder: uniqueInstruction,
+            regenerationInstruction: attempt > 0 ? "The previous draft was too similar to an existing bid. Change the opening angle, sentence rhythm, structure, and concrete execution idea; changing only the price is not acceptable." : ""
           }) }] }
         ],
         max_output_tokens: 350
       }),
       signal: controller.signal
-    });
-    if (!response.ok) throw new Error(`AI provider returned ${response.status}`);
-    const parsed = parseAI(extractResponseText(await response.json()));
-    if (!parsed?.proposal || typeof parsed.proposal !== "string") return fallback;
-    const aiDuration = /^\d{1,2}$/.test(String(parsed.durationDays || "")) ? String(parsed.durationDays) : duration;
-    const proposal = enforceProposalStyle(parsed.proposal);
-    const scored = scoreResult(project, proposal, cleanedBrief, price, aiDuration);
-    return scored.bidQualityScore >= 70 ? scored : fallback;
-  } catch {
-    return fallback;
-  } finally {
-    clearTimeout(timer);
+      });
+      if (!response.ok) throw new Error(`AI provider returned ${response.status}`);
+      const parsed = parseAI(extractResponseText(await response.json()));
+      if (!parsed?.proposal || typeof parsed.proposal !== "string") continue;
+      const aiDuration = /^\d{1,2}$/.test(String(parsed.durationDays || "")) ? String(parsed.durationDays) : duration;
+      const proposal = enforceProposalStyle(parsed.proposal);
+      const scored = scoreResult(project, proposal, cleanedBrief, price, aiDuration);
+      lastScored = scored;
+      if (scored.bidQualityScore >= 70 && !shouldRegenerateBid(proposal, previousBids)) return scored;
+    } catch {
+      break;
+    } finally {
+      clearTimeout(timer);
+    }
   }
+  return lastScored && !shouldRegenerateBid(lastScored.bid, previousBids) && lastScored.bidQualityScore >= 70 ? lastScored : safeFallback;
 }
