@@ -1,6 +1,6 @@
-# Freelance Bid Copilot v0.7.2
+# Freelance Bid Copilot v0.7.3
 
-## v0.7.2 — Production consistency and bid safeguards
+## v0.7.3 — Project fingerprint and similarity regeneration
 
 - Keeps Telegram focused on fresh project-link notifications while the extension performs project-specific bid generation and guarded filling.
 - Enforces concise, varied proposals after model generation and replaces low-quality output with a safe local fallback.

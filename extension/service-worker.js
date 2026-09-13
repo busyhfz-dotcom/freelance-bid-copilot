@@ -1,6 +1,6 @@
 importScripts("domain-engine.js", "guard-policy.js");
 
-const ENGINE_VERSION = "0.7.2";
+const ENGINE_VERSION = "0.7.3";
 
 const DEFAULTS = {
   panelUrl: "https://www.freelancerpanel.ir",

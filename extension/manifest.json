@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Freelance Bid Copilot",
-  "version": "0.7.2",
+  "version": "0.7.3",
   "description": "Project-specific concise bidding for Kaya and Ponisha with competitive budget pricing, canonical duplicate filtering, blocked-country filtering, and guarded proposal submission.",
   "permissions": [
     "activeTab",
