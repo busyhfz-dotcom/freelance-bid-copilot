@@ -1,6 +1,6 @@
 importScripts("domain-engine.js", "guard-policy.js");
 
-const ENGINE_VERSION = "0.7.3";
+const ENGINE_VERSION = "0.7.4";
 
 const DEFAULTS = {
   panelUrl: "https://www.freelancerpanel.ir",
@@ -18,7 +18,14 @@ async function activeTab() { const [tab] = await chrome.tabs.query({ active: tru
 function supportedMarketplace(url = "") { try { const h = new URL(url).hostname.toLowerCase(); return h === "kaya.ir" || h.endsWith(".kaya.ir") || h === "ponisha.ir" || h.endsWith(".ponisha.ir"); } catch { return false; } }
 function isMissingReceiver(error) { return /Receiving end does not exist|Could not establish connection/i.test(String(error?.message || error || "")); }
 async function injectContent(tab) { if (!supportedMarketplace(tab.url)) throw new Error("افزونه را روی صفحه پروژه یا لیست پروژه‌ها در کایا یا پونیشا باز کن."); await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["adapter-core.js", "adapters.js", "content.js"] }); }
-async function tabMessage(type, payload) { const tab = await activeTab(); if (!supportedMarketplace(tab.url)) throw new Error("افزونه را روی صفحه پروژه یا لیست پروژه‌ها در کایا یا پونیشا باز کن."); try { return await chrome.tabs.sendMessage(tab.id, { type, payload }); } catch (e) { if (!isMissingReceiver(e)) throw e; await injectContent(tab); return chrome.tabs.sendMessage(tab.id, { type, payload }); } }
+async function contentReady(tab) { try { const pong = await chrome.tabs.sendMessage(tab.id, { type: "PING" }); return pong?.ok && pong.version === ENGINE_VERSION; } catch { return false; } }
+async function ensureContent(tab) { if (!supportedMarketplace(tab.url)) throw new Error("افزونه را روی صفحه پروژه یا لیست پروژه‌ها در کایا یا پونیشا باز کن."); if (await contentReady(tab)) return; await injectContent(tab); if (!(await contentReady(tab))) throw new Error("ارتباط افزونه با صفحه برقرار نشد؛ صفحه را یک‌بار Refresh کن."); }
+async function tabMessage(type, payload) { const tab = await activeTab(); await ensureContent(tab); try { return await chrome.tabs.sendMessage(tab.id, { type, payload }); } catch (e) { if (!isMissingReceiver(e)) throw e; await injectContent(tab); return chrome.tabs.sendMessage(tab.id, { type, payload }); } }
+
+async function recordWake(reason) { await chrome.storage.local.set({ extensionRuntime: { version: ENGINE_VERSION, reason, awakeAt: new Date().toISOString() } }); }
+chrome.runtime.onInstalled.addListener(() => { void recordWake("installed"); });
+chrome.runtime.onStartup.addListener(() => { void recordWake("startup"); });
+void recordWake("service-worker");
 
 async function ensureProposalForm() {
   let inspected = await tabMessage("INSPECT");
@@ -158,6 +165,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   (async () => {
     try {
       if (message.type === "COPILOT_INSPECT") { sendResponse(await tabMessage("INSPECT")); return; }
+      if (message.type === "COPILOT_HEALTH") { await recordWake("health-check"); sendResponse({ ok: true, version: ENGINE_VERSION }); return; }
       if (message.type === "COPILOT_SCAN_LIST") {
         const scan = await tabMessage("SCAN_LIST");
         if (!scan?.ok) throw new Error(scan?.reason || "لیست پروژه‌ها خوانده نشد.");

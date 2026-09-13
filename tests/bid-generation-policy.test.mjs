@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 import test from "node:test";
 import { enforceProposalStyle, parseBudget, recommendedPriceForBudget } from "../panel/lib/bid-utils.ts";
 import { canonicalProjectUrl, comesFromBlockedCountry, projectFingerprint } from "../panel/lib/candidate-policy.ts";
 import { createProjectFingerprint } from "../panel/lib/project-fingerprint.ts";
 import { bidSimilarityScore, shouldRegenerateBid } from "../panel/lib/bid-similarity-guard.ts";
+const bidSource = fs.readFileSync(path.resolve(import.meta.dirname, "../panel/lib/bid.ts"), "utf8");
 
 const project = {
   site: "ponisha",
@@ -32,6 +35,11 @@ test("proposal post-processing removes generic openings, template headings and e
   assert.match(styled, /داشبورد/);
 });
 
+test("a natural Persian greeting is preserved when the proposal itself is specific", () => {
+  const styled = enforceProposalStyle("سلام وقت بخیر. اتصال endpointهای ووکامرس به جزئیات سفارش نیازمند کنترل permission هر مسیر است.");
+  assert.match(styled, /^سلام وقت بخیر/);
+});
+
 test("country policy only reads client metadata", () => {
   assert.equal(comesFromBlockedCountry({ clientLocation: "Lahore, Pakistan", description: "German website" }), true);
   assert.equal(comesFromBlockedCountry({ clientLocation: "Berlin, Germany", description: "India travel portal" }), false);
@@ -57,4 +65,27 @@ test("similarity guard detects repeated wording", () => {
   const repeated = "برای طراحی داشبورد ابتدا نسخه اولیه قابل بررسی آماده می‌کنم و بعد اصلاحات را اعمال می‌کنم.";
   assert.equal(shouldRegenerateBid(repeated, previous), true);
   assert.ok(bidSimilarityScore("یک پیشنهاد کاملاً متفاوت برای ترجمه مقاله آماده می‌کنم.", previous) < 0.72);
+});
+
+test("generic fallback phrases are rejected instead of being submitted", () => {
+  assert.equal(enforceProposalStyle("به‌نظرم نقطه حساس این پروژه این است که نسخه اولیه را زود روی میز بگذاریم."), "");
+});
+
+test("bid generation fails closed and retries rejected model output", () => {
+  assert.match(bidSource, /AI_NOT_CONFIGURED/);
+  assert.match(bidSource, /attempt < 3/);
+  assert.match(bidSource, /lastFailure = "similarity_guard"/);
+  assert.match(bidSource, /lastFailure = "project_grounding_guard"/);
+  assert.match(bidSource, /throw new BidGenerationError\("AI_GENERATION_REJECTED"/);
+  assert.doesNotMatch(bidSource, /function fallbackProposal/);
+});
+
+test("extension settings verifies authenticated panel health and AI readiness", () => {
+  const options = fs.readFileSync(path.resolve(import.meta.dirname, "../extension/options.js"), "utf8");
+  const health = fs.readFileSync(path.resolve(import.meta.dirname, "../panel/app/api/health/route.ts"), "utf8");
+  assert.match(options, /\/api\/health/);
+  assert.match(options, /health\.aiConfigured/);
+  assert.match(health, /isAuthorized\(req\)/);
+  assert.match(health, /OPENAI_API_KEY/);
+  assert.match(health, /OPENAI_MODEL/);
 });

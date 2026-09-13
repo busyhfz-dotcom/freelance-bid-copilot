@@ -1,9 +1,9 @@
-# Freelance Bid Copilot v0.7.3
+# Freelance Bid Copilot v0.7.4
 
-## v0.7.3 — Project fingerprint and similarity regeneration
+## v0.7.4 — Human project analysis and extension wake recovery
 
 - Keeps Telegram focused on fresh project-link notifications while the extension performs project-specific bid generation and guarded filling.
-- Enforces concise, varied proposals after model generation and replaces low-quality output with a safe local fallback.
+- Enforces brief-grounded, varied proposals after model generation and rejects low-quality output without substituting a canned fallback.
 - Correctly parses Persian million/thousand budget shorthand and never recommends above the employer's stated ceiling.
 - Blocks employers from Pakistan, Bangladesh and India in the Worker, panel generation API, notification queue and extension.
 - Deduplicates by canonical URL plus a stable marketplace/title fingerprint, including extension history.
@@ -248,7 +248,7 @@ npm run dev
 
 Open `http://localhost:3000`.
 
-Optional AI generation requires `OPENAI_API_KEY` and `OPENAI_MODEL` in `.env.local`. Without them, the local fallback generator is used.
+AI generation requires `OPENAI_API_KEY` and `OPENAI_MODEL`. If either is missing or the provider output fails quality/similarity checks, generation stops with an explicit error; the system never substitutes a canned fallback bid.
 
 ## Install / update the extension
 

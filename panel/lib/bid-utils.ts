@@ -30,46 +30,34 @@ function roundCompetitive(value: number) {
 export function recommendedPriceForBudget(budget: string, competition: CompetitionLevel) {
   const { min, max, currency } = parseBudget(budget);
   if (!max) return "";
-
   const wideRange = min > 0 && max / min >= 3;
-  let position = 0.55;
-  if (competition === "low") position = wideRange ? 0.58 : 0.62;
-  if (competition === "medium") position = wideRange ? 0.46 : 0.54;
-  if (competition === "high") position = wideRange ? 0.36 : 0.42;
+  let position = 0.56;
+  if (competition === "low") position = wideRange ? 0.56 : 0.62;
+  else if (competition === "medium") position = wideRange ? 0.45 : 0.55;
+  else if (competition === "high") position = wideRange ? 0.34 : 0.44;
 
   const raw = min && max > min
     ? min + (max - min) * position
-    : max * (competition === "high" ? 0.82 : competition === "medium" ? 0.86 : 0.9);
-
-  const value = Math.max(min || 1, Math.min(max, roundCompetitive(raw)));
+    : max * (competition === "high" ? 0.82 : competition === "medium" ? 0.86 : 0.90);
+  const value = Math.max(min === max ? 1 : min, Math.min(max, roundCompetitive(raw)));
   return `${value.toLocaleString("en-US")} ${currency}`.trim();
 }
 
 const FORBIDDEN_HEADING = /^(?:Tools?\s*&\s*Software(?:\s*Stack)?|Asset Libraries|Project Roadmap|Reassuring Facts|Industry Standards|Production-Ready Quality|مراحل پروژه|ابزارهای مورد استفاده)\s*:?$/i;
+const GENERIC_CLICHE = /(?:به.?نظرم نقطه حساس|خروجی این پروژه را می.?شود بدون رفت.?وبرگشت اضافه جلو برد|برای این کار پیشنهاد می.?کنم مستقیم سراغ بخش اصلی برویم|نسخه اولیه را زود روی میز بگذاریم|یک نسخه (?:کوتاه|اولیه).{0,30}قابل بررسی|پس از بررسی توضیحات پروژه.{0,35}(?:آماده|انجام)|با توجه به توضیحات پروژه.{0,35}(?:می.?توان|پیشنهاد)|the useful first step|i.?d start with the part|this can move quickly if we lock|i.?d go straight to the main deliverable)/i;
 
-const AI_OPENINGS = /^(?:سلام|با سلام|درود|hello|hi|dear|I would (?:love|be thrilled) to help|خوشحال می‌شوم|مایلم)\b/i;
-
-export function enforceProposalStyle(proposal: string) {
-  let paragraphs = String(proposal || "")
+export function enforceProposalStyle(proposal: string, maxCharacters = 1400) {
+  if (GENERIC_CLICHE.test(String(proposal || ""))) return "";
+  const paragraphs = String(proposal || "")
     .replace(/\r/g, "")
     .split(/\n\s*\n+/)
     .map((part) => part.replace(/[ \t]+/g, " ").trim())
-    .filter((part) => part && !FORBIDDEN_HEADING.test(part));
-
-  paragraphs = paragraphs.slice(0, 4);
-
+    .filter((part) => part && !FORBIDDEN_HEADING.test(part))
+    .slice(0, 4);
   if (!paragraphs.length) return "";
-
   paragraphs[0] = paragraphs[0]
-    .replace(AI_OPENINGS, "")
+    .replace(/^(?:با سلام(?:،|,)?\s*(?:دوست عزیز|کارفرمای محترم)?)[،,.!?؟:\s-]*/i, "")
+    .replace(/^(?:I would (?:love|be thrilled) to help(?: you)?(?: with| on)?|خوشحال می‌شوم(?: که)?|مایلم(?: که)?)\s*/i, "")
     .trim();
-
-  // Keep Persian proposals practical: avoid generic closing questions and repeated AI patterns.
-  paragraphs = paragraphs.map((p) => p
-    .replace(/(Industry Standards|Production-Ready Quality|Reassuring Facts)/gi, "")
-    .replace(/مراحل پروژه|ابزارهای مورد استفاده/g, "")
-    .trim())
-    .filter(Boolean);
-
-  return paragraphs.join("\n\n").slice(0, 900).trim();
+  return paragraphs.filter(Boolean).join("\n\n").slice(0, maxCharacters).trim();
 }

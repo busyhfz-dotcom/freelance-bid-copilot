@@ -799,7 +799,7 @@ export default function Page() {
           </aside>
         </div>
 
-        <footer className="statusBar" dir="ltr"><span><i className={workerOnline ? "online" : ""} /> WORKER {workerOnline ? "ONLINE" : "OFFLINE"}</span><span>API READY</span><span>QUEUE {pendingApprovalCount}</span><span>REPORTS {reports.length}</span><span className="spacer" /><span>TELEGRAM PROJECT ALERTS</span><span>GUARDED EXTENSION BIDS</span><span>v0.7.3</span></footer>
+        <footer className="statusBar" dir="ltr"><span><i className={workerOnline ? "online" : ""} /> WORKER {workerOnline ? "ONLINE" : "OFFLINE"}</span><span>API READY</span><span>QUEUE {pendingApprovalCount}</span><span>REPORTS {reports.length}</span><span className="spacer" /><span>TELEGRAM PROJECT ALERTS</span><span>GUARDED EXTENSION BIDS</span><span>v0.7.4</span></footer>
       </section>
 
       {notice && <div className={`toast ${notice.kind}`}>{notice.text}</div>}

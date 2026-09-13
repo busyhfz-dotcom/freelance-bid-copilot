@@ -126,6 +126,17 @@ test("extension can reach production and defaults explicit approve to guarded su
   assert.match(options, /آزمایش اتصال/);
 });
 
+test("MV3 extension wakes cleanly and replaces stale content-script listeners", () => {
+  const worker = read("extension/service-worker.js");
+  const content = read("extension/content.js");
+  assert.match(worker, /contentReady\(tab\)/);
+  assert.match(worker, /ensureContent\(tab\)/);
+  assert.match(worker, /chrome\.runtime\.onStartup\.addListener/);
+  assert.match(worker, /chrome\.storage\.local\.set\(\{ extensionRuntime/);
+  assert.match(content, /removeListener\(previous\.listener\)/);
+  assert.match(content, /version: CONTENT_VERSION/);
+});
+
 test("Worker normalizes fresh listings without generating or submitting bids", () => {
   const worker = read("worker/src/index.mjs");
   const scanSite = worker.slice(worker.indexOf("async function scanSite"), worker.indexOf("async function scanCycle"));
@@ -195,9 +206,9 @@ test("proposal strategy rejects repetitive AI-template sections", () => {
   assert.match(bid, /Asset Libraries/);
   assert.match(bid, /Project Roadmap/);
   assert.match(bid, /Reassuring Facts/);
-  assert.match(bid, /2-4 compact paragraphs/);
+  assert.match(bid, /2-4 natural paragraphs/);
   assert.match(bid, /enforceProposalStyle/);
-  assert.match(bid, /max_output_tokens: 350/);
+  assert.match(bid, /max_output_tokens: 650/);
 });
 
 test("dashboard exposes Worker health and Telegram approval queue", () => {

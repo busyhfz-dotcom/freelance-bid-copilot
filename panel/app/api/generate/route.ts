@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { isAuthorized } from "@/lib/auth";
-import { generateBid } from "@/lib/bid";
+import { BidGenerationError, generateBid } from "@/lib/bid";
 import { listProjects, saveProject } from "@/lib/store";
 import type { ProjectPayload, ProjectRecord } from "@/lib/types";
 import { comesFromBlockedCountry } from "@/lib/candidate-policy";
@@ -36,7 +36,14 @@ export async function POST(req: NextRequest) {
 
   const previous = (await listProjects()).filter((item) => item.url !== project.url).slice(0, 30)
     .map((item) => ({ proposal: item.bid, title: item.title, createdAt: item.capturedAt }));
-  const generated = await generateBid(project, previous);
+  let generated;
+  try {
+    generated = await generateBid(project, previous);
+  } catch (error) {
+    const code = error instanceof BidGenerationError ? error.code : "AI_GENERATION_FAILED";
+    console.error("[bid-generation]", { code, site: project.site, url: project.url });
+    return NextResponse.json({ error: error instanceof Error ? error.message : "Bid generation failed", code }, { status: 503, headers: cors() });
+  }
   const id = project.id || createHash("sha1").update(`${project.site}|${project.url}`).digest("hex").slice(0, 18);
   const record: ProjectRecord = {
     ...project,

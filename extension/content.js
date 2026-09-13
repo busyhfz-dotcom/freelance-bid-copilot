@@ -1,12 +1,13 @@
 (() => {
-  if (globalThis.__BID_COPILOT_CONTENT_READY__) return;
-  globalThis.__BID_COPILOT_CONTENT_READY__ = true;
+  const CONTENT_VERSION = "0.7.4";
+  const previous = globalThis.__BID_COPILOT_CONTENT_STATE__;
+  if (previous?.listener) chrome.runtime.onMessage.removeListener(previous.listener);
 
-  chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  const listener = (message, _sender, sendResponse) => {
     (async () => {
       try {
         if (message.type === "PING") {
-          sendResponse({ ok: true, ready: true });
+          sendResponse({ ok: true, ready: true, version: CONTENT_VERSION });
           return;
         }
         if (!window.BidCopilotAdapter) throw new Error("Adapter not loaded");
@@ -21,5 +22,7 @@
       }
     })();
     return true;
-  });
+  };
+  chrome.runtime.onMessage.addListener(listener);
+  globalThis.__BID_COPILOT_CONTENT_STATE__ = { version: CONTENT_VERSION, listener };
 })();

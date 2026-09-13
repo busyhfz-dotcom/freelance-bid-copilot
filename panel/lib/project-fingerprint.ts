@@ -11,7 +11,16 @@ function normalize(value = "") {
 }
 
 function extractSignals(text: string) {
-  return normalize(text).split(/[،,.\n؛]/).map((item) => item.trim()).filter((item) => item.length > 12).slice(0, 6);
+  const segments = normalize(text).split(/[،,.\n؛]/).map((item) => item.trim()).filter((item) => item.length > 12);
+  const specific = segments.filter((item) => /(?:api|ajax|history|endpoint|elementor|woocommerce|wordpress|وردپرس|ووکامرس|المنتور|درگاه|پنل|داشبورد|صفحه|ماژول|افزونه|ربات|اتصال|یکپارچه|فرمت|نمونه|تعداد|نسخه|خطا|باگ|طراحی|محتوا)/i.test(item));
+  return [...new Set([...specific, ...segments])].slice(0, 8);
+}
+
+function extractConstraints(text: string, skills: string[]) {
+  const explicit = normalize(text).split(/[،,.\n؛]/)
+    .map((item) => item.trim())
+    .filter((item) => /(?:باید|لازم|الزام|حداکثر|حداقل|تحویل|روز|ساعت|تعداد|نسخه|ریسپانسیو|واکنش.?گرا|سازگار|api|endpoint|فرمت|وردپرس|woocommerce|elementor|اختصاصی|from scratch|must|required|deadline|responsive|compatible)/i.test(item));
+  return [...new Set([...skills.map(normalize), ...explicit])].filter(Boolean).slice(0, 10);
 }
 
 export function createProjectFingerprint(input: { title?: string; description?: string; skills?: string[] }): ProjectFingerprint {
@@ -23,8 +32,8 @@ export function createProjectFingerprint(input: { title?: string; description?: 
   return {
     deliverable: normalize(input.title || source.slice(0, 120)),
     domain,
-    constraints: (input.skills || []).map(normalize).filter(Boolean),
-    intent: source.slice(0, 300),
+    constraints: extractConstraints(source, input.skills || []),
+    intent: normalize(input.description || input.title || "").slice(0, 600),
     uniqueSignals: extractSignals(source)
   };
 }
