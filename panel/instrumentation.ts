@@ -12,7 +12,7 @@ function contentText(content: unknown): string {
     .join("\n");
 }
 
-function responsesToChatBody(rawBody: BodyInit | null | undefined, model: string) {
+function responsesToChatBody(rawBody: BodyInit | null | undefined, model: string, openRouter: boolean) {
   if (typeof rawBody !== "string") return null;
   try {
     const parsed = JSON.parse(rawBody);
@@ -27,27 +27,57 @@ function responsesToChatBody(rawBody: BodyInit | null | undefined, model: string
 
     if (!messages.length) return null;
 
-    return JSON.stringify({
+    const body: Record<string, unknown> = {
       model,
       messages,
-      max_tokens: Number(parsed?.max_output_tokens) || 650,
-      response_format: { type: "json_object" }
-    });
+      max_tokens: Math.max(Number(parsed?.max_output_tokens) || 650, 1400),
+      response_format: {
+        type: "json_schema",
+        json_schema: {
+          name: "freelance_bid",
+          strict: true,
+          schema: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              proposal: { type: "string" },
+              durationDays: { type: "string", pattern: "^[0-9]{1,2}$" }
+            },
+            required: ["proposal", "durationDays"]
+          }
+        }
+      }
+    };
+
+    if (openRouter) {
+      body.provider = { require_parameters: true };
+      body.reasoning = { enabled: false };
+    }
+
+    return JSON.stringify(body);
   } catch {
     return null;
   }
 }
 
 function chatOutputText(data: any): string {
-  const content = data?.choices?.[0]?.message?.content;
+  const message = data?.choices?.[0]?.message;
+  const content = message?.content;
   if (typeof content === "string") return content.trim();
+  if (content && typeof content === "object" && !Array.isArray(content)) {
+    try { return JSON.stringify(content); } catch { /* ignore */ }
+  }
   if (Array.isArray(content)) {
     return content
-      .map((part: any) => typeof part?.text === "string" ? part.text : "")
+      .map((part: any) => typeof part?.text === "string" ? part.text : typeof part?.content === "string" ? part.content : "")
       .filter(Boolean)
       .join("\n")
       .trim();
   }
+  if (message?.parsed && typeof message.parsed === "object") {
+    try { return JSON.stringify(message.parsed); } catch { /* ignore */ }
+  }
+  if (typeof data?.choices?.[0]?.text === "string") return data.choices[0].text.trim();
   return "";
 }
 
@@ -70,15 +100,15 @@ export function register() {
     const provider = resolveAIProvider();
     if (!provider.configured || provider.provider === "openai") return originalFetch(input, init);
 
-    const chatBody = responsesToChatBody(init?.body, provider.model);
+    const isOpenRouter = provider.baseUrl.includes("openrouter.ai");
+    const chatBody = responsesToChatBody(init?.body, provider.model, isOpenRouter);
     if (!chatBody) return originalFetch(input, init);
 
     const headers = new Headers(init?.headers || (input instanceof Request ? input.headers : undefined));
     headers.set("Authorization", `Bearer ${provider.apiKey}`);
     headers.set("Content-Type", "application/json");
 
-    // OpenRouter accepts these headers and uses them only for app attribution.
-    if (provider.baseUrl.includes("openrouter.ai")) {
+    if (isOpenRouter) {
       headers.set("HTTP-Referer", "https://www.freelancerpanel.ir");
       headers.set("X-Title", "Freelance Bid Copilot");
     }
@@ -91,6 +121,13 @@ export function register() {
     try {
       const data = JSON.parse(raw);
       const outputText = chatOutputText(data);
+      console.info("[ai-provider]", {
+        provider: provider.provider,
+        upstreamModel: typeof data?.model === "string" ? data.model : provider.model,
+        finishReason: data?.choices?.[0]?.finish_reason || null,
+        outputLength: outputText.length
+      });
+
       if (!outputText) {
         const passthroughHeaders = new Headers(response.headers);
         passthroughHeaders.delete("content-length");
