@@ -40,8 +40,8 @@ function responsesToChatBody(rawBody: BodyInit | null | undefined, model: string
             type: "object",
             additionalProperties: false,
             properties: {
-              proposal: { type: "string" },
-              durationDays: { type: "string", pattern: "^[0-9]{1,2}$" }
+              proposal: { type: "string", description: "The project-specific freelance proposal text." },
+              durationDays: { type: "string", description: "Estimated duration in whole days, using digits only." }
             },
             required: ["proposal", "durationDays"]
           }
@@ -51,7 +51,6 @@ function responsesToChatBody(rawBody: BodyInit | null | undefined, model: string
 
     if (openRouter) {
       body.provider = { require_parameters: true };
-      body.reasoning = { enabled: false };
     }
 
     return JSON.stringify(body);
@@ -115,7 +114,26 @@ export function register() {
 
     const chatEndpoint = `${provider.baseUrl}/chat/completions`;
     const response = await originalFetch(chatEndpoint, { ...init, headers, body: chatBody });
-    if (!response.ok) return response;
+
+    if (!response.ok) {
+      const rawError = await response.text();
+      let errorSummary = rawError.slice(0, 500);
+      try {
+        const parsedError = JSON.parse(rawError);
+        errorSummary = String(parsedError?.error?.message || parsedError?.message || errorSummary).slice(0, 500);
+      } catch {
+        // Keep a short raw summary only; API keys are never part of the upstream error body.
+      }
+      console.error("[ai-provider-upstream]", {
+        provider: provider.provider,
+        status: response.status,
+        model: provider.model,
+        error: errorSummary
+      });
+      const passthroughHeaders = new Headers(response.headers);
+      passthroughHeaders.delete("content-length");
+      return new Response(rawError, { status: response.status, statusText: response.statusText, headers: passthroughHeaders });
+    }
 
     const raw = await response.text();
     try {
