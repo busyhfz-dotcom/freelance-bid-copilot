@@ -80,12 +80,16 @@ test("bid generation fails closed and retries rejected model output", () => {
   assert.doesNotMatch(bidSource, /function fallbackProposal/);
 });
 
-test("extension settings verifies authenticated panel health and AI readiness", () => {
+test("extension settings verifies authenticated panel health and provider-aware AI readiness", () => {
   const options = fs.readFileSync(path.resolve(import.meta.dirname, "../extension/options.js"), "utf8");
   const health = fs.readFileSync(path.resolve(import.meta.dirname, "../panel/app/api/health/route.ts"), "utf8");
+  const provider = fs.readFileSync(path.resolve(import.meta.dirname, "../panel/lib/ai-provider.ts"), "utf8");
+  const instrumentation = fs.readFileSync(path.resolve(import.meta.dirname, "../panel/instrumentation.ts"), "utf8");
   assert.match(options, /\/api\/health/);
   assert.match(options, /health\.aiConfigured/);
   assert.match(health, /isAuthorized\(req\)/);
-  assert.match(health, /OPENAI_API_KEY/);
-  assert.match(health, /OPENAI_MODEL/);
+  assert.match(health, /resolveAIProvider/);
+  assert.match(provider, /GROQ_API_KEY/);
+  assert.match(provider, /openai\/gpt-oss-120b/);
+  assert.match(instrumentation, /api\.groq|provider\.endpoint|OPENAI_RESPONSES_URL/);
 });
