@@ -1,6 +1,7 @@
 import { resolveAIProvider } from "./lib/ai-provider";
 
 const OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses";
+const OPENROUTER_FAST_FREE_MODEL = "nex-agi/nex-n2.5-mini:free";
 const PATCH_MARK = Symbol.for("freelance-bid-copilot.ai-provider-fetch");
 
 function contentText(content: unknown): string {
@@ -100,7 +101,14 @@ export function register() {
     if (!provider.configured || provider.provider === "openai") return originalFetch(input, init);
 
     const isOpenRouter = provider.baseUrl.includes("openrouter.ai");
-    const chatBody = responsesToChatBody(init?.body, provider.model, isOpenRouter);
+    // Preserve all bid-writing prompts, quality guards, similarity guards, retries,
+    // JSON schema and token limits. Only replace OpenRouter's random free router
+    // with the fast free model that has already produced successful bids in production.
+    const effectiveModel = isOpenRouter && provider.model === "openrouter/free"
+      ? OPENROUTER_FAST_FREE_MODEL
+      : provider.model;
+
+    const chatBody = responsesToChatBody(init?.body, effectiveModel, isOpenRouter);
     if (!chatBody) return originalFetch(input, init);
 
     const headers = new Headers(init?.headers || (input instanceof Request ? input.headers : undefined));
@@ -127,7 +135,7 @@ export function register() {
       console.error("[ai-provider-upstream]", {
         provider: provider.provider,
         status: response.status,
-        model: provider.model,
+        model: effectiveModel,
         error: errorSummary
       });
       const passthroughHeaders = new Headers(response.headers);
@@ -141,7 +149,8 @@ export function register() {
       const outputText = chatOutputText(data);
       console.info("[ai-provider]", {
         provider: provider.provider,
-        upstreamModel: typeof data?.model === "string" ? data.model : provider.model,
+        upstreamModel: typeof data?.model === "string" ? data.model : effectiveModel,
+        configuredModel: provider.model,
         finishReason: data?.choices?.[0]?.finish_reason || null,
         outputLength: outputText.length
       });
