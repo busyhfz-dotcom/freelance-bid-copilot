@@ -4,7 +4,7 @@ const OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses";
 const PATCH_MARK = Symbol.for("freelance-bid-copilot.ai-provider-fetch");
 
 export function register() {
-  const state = globalThis as typeof globalThis & { [PATCH_MARK]?: boolean };
+  const state = globalThis as any;
   if (state[PATCH_MARK]) return;
   state[PATCH_MARK] = true;
 
