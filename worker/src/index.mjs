@@ -20,6 +20,8 @@ const domains = String(process.env.PREFERRED_DOMAINS || "").split(",").map((valu
 const scanInterval = clamp(process.env.SCAN_INTERVAL_SECONDS, 300, 300, 3600) * 1000;
 const approvalPoll = clamp(process.env.APPROVAL_POLL_SECONDS, 15, 15, 60) * 1000;
 const inspectLimit = clamp(process.env.INSPECT_LIMIT_PER_SITE, 5, 1, 5);
+const browserOperationTimeout = clamp(process.env.BROWSER_OPERATION_TIMEOUT_SECONDS, 35, 10, 90) * 1000;
+const siteScanTimeout = clamp(process.env.SITE_SCAN_TIMEOUT_SECONDS, 150, 45, 600) * 1000;
 const topPerCycle = clamp(process.env.TOP_BIDS_PER_CYCLE, 1, 1, 1);
 const automationMinScore = clamp(process.env.AUTOMATION_MIN_SCORE, 72, 65, 95);
 const blockedSiteRetry = blockedRetryDelayMs(process.env.BLOCKED_SITE_RETRY_MINUTES);
@@ -43,6 +45,7 @@ let stopping = false;
 let approvalBusy = false;
 let scanBusy = false;
 let lastScanAt = "";
+let scanStartedAt = "";
 let status = "starting";
 let statusMessage = "Worker is starting";
 const contexts = new Map();
@@ -60,6 +63,24 @@ function clamp(value, fallback, min, max) {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function timeoutError(label, timeoutMs) {
+  const error = new Error(`${label} timed out after ${Math.ceil(timeoutMs / 1000)}s`);
+  error.name = "TimeoutError";
+  return error;
+}
+
+async function withinTimeout(label, operation, timeoutMs = browserOperationTimeout) {
+  let timer;
+  try {
+    return await Promise.race([
+      Promise.resolve().then(operation),
+      new Promise((_, reject) => { timer = setTimeout(() => reject(timeoutError(label, timeoutMs)), timeoutMs); })
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function wasSeen(project = {}) {
@@ -172,9 +193,9 @@ async function persistContext(site) {
   const context = contexts.get(site);
   if (!context) return;
   try {
-    await context.storageState({ path: markets[site].statePath });
+    await withinTimeout(`${site} storage state`, () => context.storageState({ path: markets[site].statePath }));
     await fs.chmod(markets[site].statePath, 0o600);
-  } catch {}
+  } catch (error) { console.error(`persist ${site}:`, error.message); }
 }
 
 async function releaseContext(site) {
@@ -182,7 +203,17 @@ async function releaseContext(site) {
   if (!context) return;
   await persistContext(site);
   contexts.delete(site);
-  await context.close().catch(() => undefined);
+  await withinTimeout(`${site} context close`, () => context.close()).catch((error) => console.error(`close ${site}:`, error.message));
+}
+
+// A timeout means the Playwright operation may still be unresolved.  Drop that
+// context before the next cycle rather than reusing a potentially wedged one.
+async function discardContext(site) {
+  const context = contexts.get(site);
+  if (!context) return;
+  contexts.delete(site);
+  await withinTimeout(`${site} timed-out context reset`, () => context.close(), 10_000)
+    .catch((error) => console.error(`reset ${site}:`, error.message));
 }
 
 async function withSiteLock(site, operation) {
@@ -194,6 +225,16 @@ async function withSiteLock(site, operation) {
 
 async function scanSite(site) {
   return withSiteLock(site, async () => {
+    try {
+      return await withinTimeout(`scan ${site}`, () => scanSiteOnce(site), siteScanTimeout);
+    } catch (error) {
+      await discardContext(site);
+      throw error;
+    }
+  });
+}
+
+async function scanSiteOnce(site) {
     const retryAt = blockedUntil.get(site) || 0;
     if (retryAt > Date.now()) return [];
     blockedUntil.delete(site);
@@ -202,8 +243,9 @@ async function scanSite(site) {
     const listingPage = await context.newPage();
     const candidates = [];
     try {
-      await listingPage.goto(markets[site].listUrl, { waitUntil: "domcontentloaded", timeout: 30_000 });
-      const block = await pageBlock(listingPage);
+      console.log(`scan ${site}: opening list`);
+      await withinTimeout(`${site} list navigation`, () => listingPage.goto(markets[site].listUrl, { waitUntil: "domcontentloaded", timeout: browserOperationTimeout }));
+      const block = await withinTimeout(`${site} list block check`, () => pageBlock(listingPage));
       if (block) {
         sessionState[site] = block;
         blockedUntil.set(site, Date.now() + blockedSiteRetry);
@@ -211,25 +253,26 @@ async function scanSite(site) {
         return candidates;
       }
       sessionState[site] = "ready";
-      await injectAdapters(listingPage);
-      const listing = await listingPage.evaluate(() => window.BidCopilotAdapter.scanList());
+      await withinTimeout(`${site} adapter injection`, () => injectAdapters(listingPage));
+      const listing = await withinTimeout(`${site} list extraction`, () => listingPage.evaluate(() => window.BidCopilotAdapter.scanList()));
       const freshItems = (listing?.items || []).filter((item) => item.url && !wasSeen({ ...item, site })).slice(0, inspectLimit);
+      console.log(`scan ${site}: ${listing?.items?.length || 0} listed, ${freshItems.length} fresh`);
       for (const item of freshItems) {
         const detailPage = await context.newPage();
         try {
-          await detailPage.goto(item.url, { waitUntil: "domcontentloaded", timeout: 30_000 });
-          const projectBlock = await pageBlock(detailPage);
+          await withinTimeout(`${site} project navigation`, () => detailPage.goto(item.url, { waitUntil: "domcontentloaded", timeout: browserOperationTimeout }));
+          const projectBlock = await withinTimeout(`${site} project block check`, () => pageBlock(detailPage));
           if (projectBlock) {
             sessionState[site] = projectBlock;
             blockedUntil.set(site, Date.now() + blockedSiteRetry);
             await heartbeat("blocked", `${site}: ${projectBlock}; manual login or CAPTCHA action is required`, site);
             break;
           }
-          await injectAdapters(detailPage);
+          await withinTimeout(`${site} project adapter injection`, () => injectAdapters(detailPage));
           const inspected = normalizeProjectInspection({
             site,
             item,
-            inspected: await detailPage.evaluate(() => window.BidCopilotAdapter.inspect()),
+            inspected: await withinTimeout(`${site} project inspection`, () => detailPage.evaluate(() => window.BidCopilotAdapter.inspect())),
             currentUrl: detailPage.url()
           });
           if (!inspected.title || !inspected.url) throw new Error("Inspection missing title or URL after listing fallback");
@@ -250,23 +293,41 @@ async function scanSite(site) {
         } catch (error) {
           console.error(`inspect ${site} ${item.url}:`, error.message);
         } finally {
-          await detailPage.close().catch(() => undefined);
+          await withinTimeout(`${site} project page close`, () => detailPage.close()).catch((error) => console.error(`close ${site} project:`, error.message));
         }
       }
       if (sessionState[site] === "ready") await heartbeat("scanning", `${site}: session ready`, site);
       return candidates;
     } finally {
-      await listingPage.close().catch(() => undefined);
+      await withinTimeout(`${site} list page close`, () => listingPage.close()).catch((error) => console.error(`close ${site} list:`, error.message));
       await releaseContext(site);
     }
-  });
 }
 
 async function scanCycle() {
   const candidates = [];
   let queuedCount = 0;
   let queueFailures = 0;
-  for (const site of Object.keys(markets)) candidates.push(...await scanSite(site));
+  let siteFailures = 0;
+  for (const site of Object.keys(markets)) {
+    try {
+      candidates.push(...await scanSite(site));
+    } catch (error) {
+      siteFailures += 1;
+      sessionState[site] = "error";
+      console.error(`scan ${site}:`, error.message);
+      await report({
+        category: "scan",
+        eventType: "site_scan_failed",
+        level: "error",
+        title: `اسکن ${site} ناموفق بود`,
+        message: error.message,
+        site,
+        status: "error",
+        metadata: { timeout: error?.name === "TimeoutError" }
+      });
+    }
+  }
   const freshProjects = candidates;
   for (const project of freshProjects) {
     try {
@@ -284,7 +345,7 @@ async function scanCycle() {
   await report({
     category: "scan",
     eventType: "scan_completed",
-    level: queueFailures ? "warning" : "success",
+    level: queueFailures || siteFailures ? "warning" : "success",
     title: "اسکن دوره‌ای تکمیل شد",
     message: queuedCount
       ? `${queuedCount} آگهی جدید با لینک مستقیم به تلگرام ارسال شد.`
@@ -294,7 +355,7 @@ async function scanCycle() {
       candidateCount: candidates.length,
       selectedCount: freshProjects.length,
       queuedCount,
-      failureCount: queueFailures,
+      failureCount: queueFailures + siteFailures,
       kayaSession: sessionState.kaya,
       ponishaSession: sessionState.ponisha
     }
@@ -304,7 +365,8 @@ async function scanCycle() {
 async function guardedScanCycle() {
   if (scanBusy) return;
   scanBusy = true;
-  try { await scanCycle(); } finally { scanBusy = false; }
+  scanStartedAt = new Date().toISOString();
+  try { await scanCycle(); } finally { scanBusy = false; scanStartedAt = ""; }
 }
 
 async function submitApproved(approval) {
@@ -442,9 +504,10 @@ async function shutdown(timers) {
 
 http.createServer((req, res) => {
   if (req.url === "/health") {
-    const healthy = !stopping && status !== "error";
+    const scanStalled = scanBusy && scanStartedAt && Date.now() - Date.parse(scanStartedAt) > siteScanTimeout;
+    const healthy = !stopping && status !== "error" && !scanStalled;
     res.writeHead(healthy ? 200 : 503, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ healthy, status, workerId, version: VERSION, lastScanAt, message: statusMessage, sessionState }));
+    res.end(JSON.stringify({ healthy, status, workerId, version: VERSION, lastScanAt, scanStartedAt, scanBusy, scanStalled, message: statusMessage, sessionState }));
     return;
   }
   res.writeHead(200, { "Content-Type": "application/json" });

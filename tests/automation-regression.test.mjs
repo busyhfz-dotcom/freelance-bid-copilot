@@ -150,14 +150,26 @@ test("Worker isolates timed-out project navigations and bounds production pollin
   assert.match(worker, /clamp\(process\.env\.SCAN_INTERVAL_SECONDS, 300, 300, 3600\)/);
   assert.match(worker, /clamp\(process\.env\.APPROVAL_POLL_SECONDS, 15, 15, 60\)/);
   assert.match(worker, /clamp\(process\.env\.INSPECT_LIMIT_PER_SITE, 5, 1, 5\)/);
+  assert.match(worker, /SITE_SCAN_TIMEOUT_SECONDS/);
+  assert.match(worker, /withinTimeout/);
+  assert.match(worker, /scanStalled/);
 
   const scanSite = worker.slice(worker.indexOf("async function scanSite"), worker.indexOf("async function scanCycle"));
   assert.match(scanSite, /const listingPage = await context\.newPage\(\)/);
   assert.match(scanSite, /const detailPage = await context\.newPage\(\)/);
-  assert.match(scanSite, /await detailPage\.goto\(item\.url/);
-  assert.match(scanSite, /await detailPage\.close\(\)\.catch/);
-  assert.match(scanSite, /await listingPage\.close\(\)\.catch/);
+  assert.match(scanSite, /detailPage\.goto\(item\.url/);
+  assert.match(scanSite, /detailPage\.close\(\)/);
+  assert.match(scanSite, /listingPage\.close\(\)/);
   assert.doesNotMatch(scanSite, /await listingPage\.goto\(item\.url/);
+});
+
+test("a hung marketplace cannot block the other marketplace or hide Worker health", () => {
+  const worker = read("worker/src/index.mjs");
+  const scanCycle = worker.slice(worker.indexOf("async function scanCycle"), worker.indexOf("async function guardedScanCycle"));
+  assert.match(scanCycle, /for \(const site of Object\.keys\(markets\)\)/);
+  assert.match(scanCycle, /siteFailures \+= 1/);
+  assert.match(scanCycle, /site_scan_failed/);
+  assert.match(worker, /scanBusy = false; scanStartedAt = ""/);
 });
 
 test("Telegram stays exclusive to new project notifications", () => {
@@ -186,7 +198,7 @@ test("Worker keeps persisted storage-state credentials owner-only", () => {
   const initialize = worker.slice(worker.indexOf("async function initializeSensitiveState"), worker.indexOf("async function api"));
   const persist = worker.slice(worker.indexOf("async function persistContext"), worker.indexOf("async function withSiteLock"));
   assert.match(initialize, /await fs\.chmod\(market\.statePath, 0o600\)/);
-  assert.match(persist, /await context\.storageState/);
+  assert.match(persist, /context\.storageState/);
   assert.match(persist, /await fs\.chmod\(markets\[site\]\.statePath, 0o600\)/);
 });
 
