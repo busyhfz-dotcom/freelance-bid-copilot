@@ -19,7 +19,7 @@ const profile = process.env.FREELANCER_PROFILE || "";
 const domains = String(process.env.PREFERRED_DOMAINS || "").split(",").map((value) => value.trim()).filter(Boolean);
 const scanInterval = clamp(process.env.SCAN_INTERVAL_SECONDS, 120, 120, 3600) * 1000;
 const approvalPoll = clamp(process.env.APPROVAL_POLL_SECONDS, 15, 15, 60) * 1000;
-const inspectLimit = clamp(process.env.INSPECT_LIMIT_PER_SITE, 5, 1, 5);
+const inspectLimit = clamp(process.env.INSPECT_LIMIT_PER_SITE, 5, 1, 10);
 const browserOperationTimeout = clamp(process.env.BROWSER_OPERATION_TIMEOUT_SECONDS, 35, 10, 90) * 1000;
 const siteScanTimeout = clamp(process.env.SITE_SCAN_TIMEOUT_SECONDS, 150, 45, 600) * 1000;
 const topPerCycle = clamp(process.env.TOP_BIDS_PER_CYCLE, 1, 1, 1);

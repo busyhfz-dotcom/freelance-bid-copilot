@@ -162,7 +162,7 @@ test("Worker isolates timed-out project navigations and bounds production pollin
   assert.match(worker, /clamp\(process\.env\.SCAN_INTERVAL_SECONDS, 120, 120, 3600\)/);
   assert.match(worker, /clamp\(process\.env\.NOTIFICATION_BATCH_PER_CYCLE, 5, 1, 30\)/);
   assert.match(worker, /clamp\(process\.env\.APPROVAL_POLL_SECONDS, 15, 15, 60\)/);
-  assert.match(worker, /clamp\(process\.env\.INSPECT_LIMIT_PER_SITE, 5, 1, 5\)/);
+  assert.match(worker, /clamp\(process\.env\.INSPECT_LIMIT_PER_SITE, 5, 1, 10\)/);
   assert.match(worker, /SITE_SCAN_TIMEOUT_SECONDS/);
   assert.match(worker, /withinTimeout/);
   assert.match(worker, /scanStalled/);
