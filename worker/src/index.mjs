@@ -39,7 +39,7 @@ const markets = {
     stateBase64: process.env.PONISHA_STORAGE_STATE_B64 || ""
   }
 };
-const notificationBatchSize = clamp(process.env.NOTIFICATION_BATCH_PER_CYCLE, 5, 1, 15);
+const notificationBatchSize = clamp(process.env.NOTIFICATION_BATCH_PER_CYCLE, 5, 1, 30);
 // This covers two bounded site scans, a bounded notification batch, and cleanup.
 // It is deliberately longer than a normal cycle so healthy slow scans are not restarted.
 const cycleWatchdogTimeout = Math.max(
