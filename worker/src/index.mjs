@@ -39,6 +39,13 @@ const markets = {
     stateBase64: process.env.PONISHA_STORAGE_STATE_B64 || ""
   }
 };
+const notificationBatchSize = clamp(process.env.NOTIFICATION_BATCH_PER_CYCLE, 5, 1, 10);
+// This covers two bounded site scans, a bounded notification batch, and cleanup.
+// It is deliberately longer than a normal cycle so healthy slow scans are not restarted.
+const cycleWatchdogTimeout = Math.max(
+  clamp(process.env.WORKER_WATCHDOG_SECONDS, 480, 180, 1800) * 1000,
+  siteScanTimeout * Object.keys(markets).length + notificationBatchSize * 20_000 + 30_000
+);
 
 let browser;
 let stopping = false;
@@ -46,6 +53,7 @@ let approvalBusy = false;
 let scanBusy = false;
 let lastScanAt = "";
 let scanStartedAt = "";
+let watchdogExiting = false;
 let status = "starting";
 let statusMessage = "Worker is starting";
 const contexts = new Map();
@@ -53,7 +61,9 @@ const locks = new Map();
 const blockedUntil = new Map();
 const sessionState = { kaya: "error", ponisha: "error" };
 const seenFile = path.join(dataDir, "state/seen.json");
+const pendingNotificationsFile = path.join(dataDir, "state/pending-notifications.json");
 let seen = new Set();
+let pendingNotifications = [];
 let adapterBundle = "";
 
 function clamp(value, fallback, min, max) {
@@ -100,6 +110,65 @@ async function atomicWrite(file, value) {
   const temporary = `${file}.${process.pid}.tmp`;
   await fs.writeFile(temporary, value, { mode: 0o600 });
   await fs.rename(temporary, file);
+}
+
+async function readPersistedArray(file, label) {
+  try {
+    const value = JSON.parse(await fs.readFile(file, "utf8"));
+    if (!Array.isArray(value)) throw new Error("expected an array");
+    return value;
+  } catch (error) {
+    if (error?.code !== "ENOENT") console.error(`read ${label}:`, error.message);
+    return [];
+  }
+}
+
+function notificationKey(project = {}) {
+  const keys = projectSeenKeys(project);
+  return keys.join("|") || `${project.site || ""}|${project.url || ""}|${project.title || ""}`;
+}
+
+async function persistPendingNotifications() {
+  await atomicWrite(pendingNotificationsFile, JSON.stringify(pendingNotifications));
+}
+
+async function enqueuePendingNotifications(projects) {
+  const known = new Set(pendingNotifications.map(notificationKey));
+  const additions = projects.filter((project) => {
+    const key = notificationKey(project);
+    if (!key || known.has(key)) return false;
+    known.add(key);
+    return true;
+  });
+  if (!additions.length) return 0;
+  pendingNotifications.push(...additions);
+  await persistPendingNotifications();
+  return additions.length;
+}
+
+async function flushPendingNotifications() {
+  let queuedCount = 0;
+  let queueFailures = 0;
+  const batch = pendingNotifications.slice(0, notificationBatchSize);
+  for (const project of batch) {
+    try {
+      const result = await api("/api/automation/candidates", { body: project });
+      if (result.created) queuedCount += 1;
+      markSeen(project);
+      const key = notificationKey(project);
+      pendingNotifications = pendingNotifications.filter((candidate) => notificationKey(candidate) !== key);
+      // Persist both sides of the hand-off before taking the next item.  A restart
+      // can therefore resume delivery without silently dropping a notification.
+      await persistPendingNotifications();
+      await atomicWrite(seenFile, JSON.stringify([...seen].slice(-5000)));
+    } catch (error) {
+      queueFailures += 1;
+      console.error("queue candidate:", error.message);
+      // Keep the failed item at the head of the durable outbox for the next cycle.
+      break;
+    }
+  }
+  return { queuedCount, queueFailures, attempted: batch.length };
 }
 
 async function initializeSensitiveState(market) {
@@ -306,8 +375,6 @@ async function scanSiteOnce(site) {
 
 async function scanCycle() {
   const candidates = [];
-  let queuedCount = 0;
-  let queueFailures = 0;
   let siteFailures = 0;
   for (const site of Object.keys(markets)) {
     try {
@@ -328,20 +395,11 @@ async function scanCycle() {
       });
     }
   }
-  const freshProjects = candidates;
-  for (const project of freshProjects) {
-    try {
-      const result = await api("/api/automation/candidates", { body: project });
-      if (result.created) queuedCount += 1;
-      markSeen(project);
-    } catch (error) {
-      queueFailures += 1;
-      console.error("queue candidate:", error.message);
-    }
-  }
+  const addedToOutbox = await enqueuePendingNotifications(candidates);
+  const { queuedCount, queueFailures, attempted } = await flushPendingNotifications();
   lastScanAt = new Date().toISOString();
   await atomicWrite(seenFile, JSON.stringify([...seen].slice(-5000)));
-  await heartbeat("idle", `Scan complete; ${queuedCount} new project notification(s) sent`);
+  await heartbeat("idle", `Scan complete; ${queuedCount} notification(s) sent; ${pendingNotifications.length} queued`);
   await report({
     category: "scan",
     eventType: "scan_completed",
@@ -349,11 +407,14 @@ async function scanCycle() {
     title: "اسکن دوره‌ای تکمیل شد",
     message: queuedCount
       ? `${queuedCount} آگهی جدید با لینک مستقیم به تلگرام ارسال شد.`
-      : `${candidates.length} آگهی تازه بررسی شد؛ اعلان ارسال‌نشده‌ای باقی نماند.`,
+      : `${candidates.length} آگهی تازه بررسی شد؛ ${pendingNotifications.length} اعلان در صف پایدار باقی مانده است.`,
     status: "idle",
     metadata: {
       candidateCount: candidates.length,
-      selectedCount: freshProjects.length,
+      selectedCount: candidates.length,
+      addedToOutbox,
+      outboxAttempted: attempted,
+      outboxRemaining: pendingNotifications.length,
       queuedCount,
       failureCount: queueFailures + siteFailures,
       kayaSession: sessionState.kaya,
@@ -367,6 +428,30 @@ async function guardedScanCycle() {
   scanBusy = true;
   scanStartedAt = new Date().toISOString();
   try { await scanCycle(); } finally { scanBusy = false; scanStartedAt = ""; }
+}
+
+function scanIsStalled(now = Date.now()) {
+  return Boolean(scanBusy && scanStartedAt && now - Date.parse(scanStartedAt) > cycleWatchdogTimeout);
+}
+
+async function enforceScanWatchdog() {
+  if (watchdogExiting || !scanIsStalled()) return;
+  watchdogExiting = true;
+  const message = `Scan watchdog exceeded ${Math.ceil(cycleWatchdogTimeout / 1000)}s; restarting Worker`;
+  status = "error";
+  statusMessage = message;
+  console.error(message);
+  await heartbeat("error", message);
+  await report({
+    category: "worker",
+    eventType: "scan_watchdog_restart",
+    level: "error",
+    title: "Worker برای بازیابی اسکن گیرکرده ری‌استارت می‌شود",
+    message,
+    status: "error",
+    metadata: { scanStartedAt, pendingNotifications: pendingNotifications.length }
+  });
+  setTimeout(() => process.exit(1), 1_000).unref();
 }
 
 async function submitApproved(approval) {
@@ -459,7 +544,8 @@ async function main() {
   if (!panelUrl.startsWith("https://") && !panelUrl.startsWith("http://127.0.0.1")) throw new Error("PANEL_URL must use HTTPS (localhost is allowed for development)");
   if (workerKey.length < 24 || !copilotKey) throw new Error("WORKER_KEY (24+ chars) and COPILOT_KEY are required");
   await fs.mkdir(path.dirname(seenFile), { recursive: true });
-  seen = new Set(JSON.parse(await fs.readFile(seenFile, "utf8").catch(() => "[]")));
+  seen = new Set(await readPersistedArray(seenFile, "seen state"));
+  pendingNotifications = await readPersistedArray(pendingNotificationsFile, "notification outbox");
   adapterBundle = `${await fs.readFile(path.join(root, "extension/adapter-core.js"), "utf8")}\n${await fs.readFile(path.join(root, "extension/adapters.js"), "utf8")}`;
   browser = await chromium.launch({ headless: true });
   await heartbeat("idle", "Worker is online");
@@ -470,7 +556,7 @@ async function main() {
     title: "Worker آنلاین شد",
     message: "مرورگر خودکار Worker اجرا شد و اسکن دوره‌ای کایا و پونیشا فعال است.",
     status: "idle",
-    metadata: { version: VERSION, scanIntervalSeconds: scanInterval / 1000 }
+    metadata: { version: VERSION, scanIntervalSeconds: scanInterval / 1000, pendingNotifications: pendingNotifications.length }
   });
   const handleScanError = async (error) => {
     const message = describeWorkerError(error);
@@ -489,8 +575,9 @@ async function main() {
   void guardedScanCycle().catch(handleScanError);
   const scanTimer = setInterval(() => void guardedScanCycle().catch(handleScanError), scanInterval);
   const heartbeatTimer = setInterval(() => void heartbeat(), 25_000);
-  process.once("SIGTERM", () => shutdown([scanTimer, heartbeatTimer]));
-  process.once("SIGINT", () => shutdown([scanTimer, heartbeatTimer]));
+  const watchdogTimer = setInterval(() => void enforceScanWatchdog(), 15_000);
+  process.once("SIGTERM", () => shutdown([scanTimer, heartbeatTimer, watchdogTimer]));
+  process.once("SIGINT", () => shutdown([scanTimer, heartbeatTimer, watchdogTimer]));
 }
 
 async function shutdown(timers) {
@@ -504,10 +591,15 @@ async function shutdown(timers) {
 
 http.createServer((req, res) => {
   if (req.url === "/health") {
-    const scanStalled = scanBusy && scanStartedAt && Date.now() - Date.parse(scanStartedAt) > siteScanTimeout;
-    const healthy = !stopping && status !== "error" && !scanStalled;
+    const scanStalled = scanIsStalled();
+    const missedCycles = Boolean(lastScanAt && !scanBusy && Date.now() - Date.parse(lastScanAt) > scanInterval * 2 + cycleWatchdogTimeout);
+    const healthy = !stopping && !watchdogExiting && status !== "error" && !scanStalled && !missedCycles;
     res.writeHead(healthy ? 200 : 503, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ healthy, status, workerId, version: VERSION, lastScanAt, scanStartedAt, scanBusy, scanStalled, message: statusMessage, sessionState }));
+    res.end(JSON.stringify({
+      healthy, status, workerId, version: VERSION, lastScanAt, scanStartedAt, scanBusy,
+      scanStalled, missedCycles, pendingNotifications: pendingNotifications.length,
+      message: statusMessage, sessionState
+    }));
     return;
   }
   res.writeHead(200, { "Content-Type": "application/json" });

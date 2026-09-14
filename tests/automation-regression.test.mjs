@@ -83,15 +83,27 @@ test("Worker alerts are deduplicated persistently and report recovery", () => {
   assert.match(telegram, /sendWorkerRecovery/);
 });
 
-test("Worker sends every fresh inspected project and scans independently", () => {
+test("Worker persists every fresh inspected project before delivery and scans independently", () => {
   const worker = read("worker/src/index.mjs");
   const scan = worker.slice(worker.indexOf("async function scanSite"), worker.indexOf("async function guardedScanCycle"));
-  assert.match(scan, /const freshProjects = candidates/);
-  assert.match(scan, /for \(const project of freshProjects\)/);
-  assert.match(scan, /\/api\/automation\/candidates/);
+  assert.match(scan, /enqueuePendingNotifications\(candidates\)/);
+  assert.match(scan, /flushPendingNotifications\(\)/);
+  assert.match(worker, /\/api\/automation\/candidates/);
   assert.doesNotMatch(scan, /safeManualReview/);
   assert.match(worker, /scanTimer/);
   assert.match(worker, /scanBusy/);
+});
+
+test("Worker uses a durable notification outbox and restarts a stalled full cycle", () => {
+  const worker = read("worker/src/index.mjs");
+  assert.match(worker, /pending-notifications\.json/);
+  assert.match(worker, /readPersistedArray\(pendingNotificationsFile/);
+  assert.match(worker, /persistPendingNotifications\(\)/);
+  assert.match(worker, /WORKER_WATCHDOG_SECONDS/);
+  assert.match(worker, /enforceScanWatchdog/);
+  assert.match(worker, /scan_watchdog_restart/);
+  assert.match(worker, /process\.exit\(1\)/);
+  assert.match(worker, /missedCycles/);
 });
 
 test("hosted panel uses a private username/password session without persisting secrets in localStorage", () => {
