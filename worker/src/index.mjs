@@ -17,7 +17,7 @@ const workerKey = process.env.WORKER_KEY || "";
 const workerId = process.env.WORKER_ID || "primary-worker";
 const profile = process.env.FREELANCER_PROFILE || "";
 const domains = String(process.env.PREFERRED_DOMAINS || "").split(",").map((value) => value.trim()).filter(Boolean);
-const scanInterval = clamp(process.env.SCAN_INTERVAL_SECONDS, 180, 180, 3600) * 1000;
+const scanInterval = clamp(process.env.SCAN_INTERVAL_SECONDS, 120, 120, 3600) * 1000;
 const approvalPoll = clamp(process.env.APPROVAL_POLL_SECONDS, 15, 15, 60) * 1000;
 const inspectLimit = clamp(process.env.INSPECT_LIMIT_PER_SITE, 5, 1, 5);
 const browserOperationTimeout = clamp(process.env.BROWSER_OPERATION_TIMEOUT_SECONDS, 35, 10, 90) * 1000;
@@ -39,7 +39,7 @@ const markets = {
     stateBase64: process.env.PONISHA_STORAGE_STATE_B64 || ""
   }
 };
-const notificationBatchSize = clamp(process.env.NOTIFICATION_BATCH_PER_CYCLE, 5, 1, 10);
+const notificationBatchSize = clamp(process.env.NOTIFICATION_BATCH_PER_CYCLE, 5, 1, 15);
 // This covers two bounded site scans, a bounded notification batch, and cleanup.
 // It is deliberately longer than a normal cycle so healthy slow scans are not restarted.
 const cycleWatchdogTimeout = Math.max(
