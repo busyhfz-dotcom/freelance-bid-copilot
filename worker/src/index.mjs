@@ -25,6 +25,10 @@ const siteScanTimeout = clamp(process.env.SITE_SCAN_TIMEOUT_SECONDS, 150, 45, 60
 const topPerCycle = clamp(process.env.TOP_BIDS_PER_CYCLE, 1, 1, 1);
 const automationMinScore = clamp(process.env.AUTOMATION_MIN_SCORE, 72, 65, 95);
 const blockedSiteRetry = blockedRetryDelayMs(process.env.BLOCKED_SITE_RETRY_MINUTES);
+const inspectionRetryDelay = clamp(process.env.INSPECTION_RETRY_MINUTES, 30, 5, 360) * 60_000;
+const memoryWatchdogInterval = clamp(process.env.MEMORY_WATCHDOG_SECONDS, 30, 15, 300) * 1000;
+const heapRestartMb = clamp(process.env.HEAP_RESTART_MB, 300, 192, 420);
+const maxWorkerUptime = clamp(process.env.MAX_WORKER_UPTIME_HOURS, 6, 1, 24) * 60 * 60_000;
 const port = clamp(process.env.PORT, 8080, 1, 65535);
 
 const markets = {
@@ -54,16 +58,20 @@ let scanBusy = false;
 let lastScanAt = "";
 let scanStartedAt = "";
 let watchdogExiting = false;
+let recycleExiting = false;
 let status = "starting";
 let statusMessage = "Worker is starting";
+const startedAt = Date.now();
 const contexts = new Map();
 const locks = new Map();
 const blockedUntil = new Map();
 const sessionState = { kaya: "error", ponisha: "error" };
 const seenFile = path.join(dataDir, "state/seen.json");
 const pendingNotificationsFile = path.join(dataDir, "state/pending-notifications.json");
+const inspectionFailuresFile = path.join(dataDir, "state/inspection-failures.json");
 let seen = new Set();
 let pendingNotifications = [];
+let inspectionFailures = new Map();
 let adapterBundle = "";
 
 function clamp(value, fallback, min, max) {
@@ -126,6 +134,59 @@ async function readPersistedArray(file, label) {
 function notificationKey(project = {}) {
   const keys = projectSeenKeys(project);
   return keys.join("|") || `${project.site || ""}|${project.url || ""}|${project.title || ""}`;
+}
+
+function inspectionFailureKey(project = {}) {
+  return notificationKey(project);
+}
+
+function isInspectionSuppressed(project = {}, now = Date.now()) {
+  const key = inspectionFailureKey(project);
+  const failure = key ? inspectionFailures.get(key) : null;
+  if (!failure) return false;
+  if (Number(failure.retryAt) > now) return true;
+  inspectionFailures.delete(key);
+  return false;
+}
+
+async function persistInspectionFailures() {
+  const items = [...inspectionFailures.values()]
+    .filter((item) => Number(item.retryAt) > Date.now() - inspectionRetryDelay)
+    .sort((a, b) => Number(b.retryAt) - Number(a.retryAt))
+    .slice(0, 500);
+  inspectionFailures = new Map(items.map((item) => [item.key, item]));
+  await atomicWrite(inspectionFailuresFile, JSON.stringify(items));
+}
+
+async function recordInspectionFailure(project = {}, error) {
+  const key = inspectionFailureKey(project);
+  if (!key) return;
+  const previous = inspectionFailures.get(key);
+  const attempts = Math.min(12, Number(previous?.attempts || 0) + 1);
+  const multiplier = Math.min(6, attempts);
+  const retryAt = Date.now() + inspectionRetryDelay * multiplier;
+  inspectionFailures.set(key, {
+    key,
+    site: project.site || "",
+    url: project.url || "",
+    title: project.title || "",
+    attempts,
+    retryAt,
+    reason: String(error?.message || error || "inspection failed").slice(0, 300)
+  });
+  await persistInspectionFailures();
+}
+
+async function clearInspectionFailure(project = {}) {
+  const key = inspectionFailureKey(project);
+  if (!key || !inspectionFailures.delete(key)) return;
+  await persistInspectionFailures();
+}
+
+function browserPoisonedBy(error) {
+  const message = String(error?.message || error || "");
+  return error?.name === "TimeoutError"
+    || /timed out|Target page, context or browser has been closed|Browser has been closed|Execution context was destroyed/i.test(message);
 }
 
 async function persistPendingNotifications() {
@@ -324,7 +385,9 @@ async function scanSiteOnce(site) {
       sessionState[site] = "ready";
       await withinTimeout(`${site} adapter injection`, () => injectAdapters(listingPage));
       const listing = await withinTimeout(`${site} list extraction`, () => listingPage.evaluate(() => window.BidCopilotAdapter.scanList()));
-      const freshItems = (listing?.items || []).filter((item) => item.url && !wasSeen({ ...item, site })).slice(0, inspectLimit);
+      const freshItems = (listing?.items || [])
+        .filter((item) => item.url && !wasSeen({ ...item, site }) && !isInspectionSuppressed({ ...item, site }))
+        .slice(0, inspectLimit);
       console.log(`scan ${site}: ${listing?.items?.length || 0} listed, ${freshItems.length} fresh`);
       for (const item of freshItems) {
         const detailPage = await context.newPage();
@@ -351,6 +414,7 @@ async function scanSiteOnce(site) {
             continue;
           }
           if (wasSeen(inspected)) continue;
+          await clearInspectionFailure({ ...inspected, site });
           candidates.push({
             ...inspected,
             capturedAt: new Date().toISOString(),
@@ -361,8 +425,11 @@ async function scanSiteOnce(site) {
           });
         } catch (error) {
           console.error(`inspect ${site} ${item.url}:`, error.message);
+          await recordInspectionFailure({ ...item, site }, error).catch((failureError) => console.error("persist inspection failure:", failureError.message));
+          if (browserPoisonedBy(error)) throw error;
         } finally {
-          await withinTimeout(`${site} project page close`, () => detailPage.close()).catch((error) => console.error(`close ${site} project:`, error.message));
+          await withinTimeout(`${site} project page close`, () => detailPage.close(), 10_000)
+            .catch((error) => console.error(`close ${site} project:`, error.message));
         }
       }
       if (sessionState[site] === "ready") await heartbeat("scanning", `${site}: session ready`, site);
@@ -434,8 +501,52 @@ function scanIsStalled(now = Date.now()) {
   return Boolean(scanBusy && scanStartedAt && now - Date.parse(scanStartedAt) > cycleWatchdogTimeout);
 }
 
+async function requestWorkerRecycle(reason, metadata = {}) {
+  if (recycleExiting || stopping) return;
+  recycleExiting = true;
+  status = "restarting";
+  statusMessage = reason;
+  console.error(reason);
+  await Promise.all([...contexts.keys()].map(persistContext)).catch(() => undefined);
+  await report({
+    category: "worker",
+    eventType: "worker_recycle",
+    level: "warning",
+    title: "Worker برای پایداری ری‌استارت می‌شود",
+    message: reason,
+    status: "restarting",
+    metadata
+  }).catch(() => undefined);
+  await browser?.close().catch(() => undefined);
+  setTimeout(() => process.exit(1), 250).unref();
+}
+
+function memorySnapshot() {
+  const usage = process.memoryUsage();
+  const toMb = (value) => Math.round(value / 1024 / 1024);
+  return {
+    heapUsedMb: toMb(usage.heapUsed),
+    heapTotalMb: toMb(usage.heapTotal),
+    rssMb: toMb(usage.rss),
+    externalMb: toMb(usage.external)
+  };
+}
+
+async function enforceMemoryWatchdog() {
+  if (recycleExiting || stopping) return;
+  const memory = memorySnapshot();
+  const uptimeMs = Date.now() - startedAt;
+  if (memory.heapUsedMb >= heapRestartMb) {
+    await requestWorkerRecycle(`Memory watchdog reached ${memory.heapUsedMb}MB heap; restarting before OOM`, { ...memory, uptimeMs, heapRestartMb });
+    return;
+  }
+  if (uptimeMs >= maxWorkerUptime) {
+    await requestWorkerRecycle(`Scheduled Worker recycle after ${Math.round(uptimeMs / 60_000)} minutes`, { ...memory, uptimeMs, maxWorkerUptime });
+  }
+}
+
 async function enforceScanWatchdog() {
-  if (watchdogExiting || !scanIsStalled()) return;
+  if (watchdogExiting || recycleExiting || !scanIsStalled()) return;
   watchdogExiting = true;
   const message = `Scan watchdog exceeded ${Math.ceil(cycleWatchdogTimeout / 1000)}s; restarting Worker`;
   status = "error";
@@ -451,7 +562,7 @@ async function enforceScanWatchdog() {
     status: "error",
     metadata: { scanStartedAt, pendingNotifications: pendingNotifications.length }
   });
-  setTimeout(() => process.exit(1), 1_000).unref();
+  await requestWorkerRecycle(message, { scanStartedAt, pendingNotifications: pendingNotifications.length });
 }
 
 async function submitApproved(approval) {
@@ -546,6 +657,12 @@ async function main() {
   await fs.mkdir(path.dirname(seenFile), { recursive: true });
   seen = new Set(await readPersistedArray(seenFile, "seen state"));
   pendingNotifications = await readPersistedArray(pendingNotificationsFile, "notification outbox");
+  const persistedInspectionFailures = await readPersistedArray(inspectionFailuresFile, "inspection failure state");
+  inspectionFailures = new Map(
+    persistedInspectionFailures
+      .filter((item) => item?.key && Number(item.retryAt) > Date.now())
+      .map((item) => [item.key, item])
+  );
   adapterBundle = `${await fs.readFile(path.join(root, "extension/adapter-core.js"), "utf8")}\n${await fs.readFile(path.join(root, "extension/adapters.js"), "utf8")}`;
   browser = await chromium.launch({ headless: true });
   await heartbeat("idle", "Worker is online");
@@ -576,8 +693,9 @@ async function main() {
   const scanTimer = setInterval(() => void guardedScanCycle().catch(handleScanError), scanInterval);
   const heartbeatTimer = setInterval(() => void heartbeat(), 25_000);
   const watchdogTimer = setInterval(() => void enforceScanWatchdog(), 15_000);
-  process.once("SIGTERM", () => shutdown([scanTimer, heartbeatTimer, watchdogTimer]));
-  process.once("SIGINT", () => shutdown([scanTimer, heartbeatTimer, watchdogTimer]));
+  const memoryTimer = setInterval(() => void enforceMemoryWatchdog(), memoryWatchdogInterval);
+  process.once("SIGTERM", () => shutdown([scanTimer, heartbeatTimer, watchdogTimer, memoryTimer]));
+  process.once("SIGINT", () => shutdown([scanTimer, heartbeatTimer, watchdogTimer, memoryTimer]));
 }
 
 async function shutdown(timers) {
@@ -593,11 +711,13 @@ http.createServer((req, res) => {
   if (req.url === "/health") {
     const scanStalled = scanIsStalled();
     const missedCycles = Boolean(lastScanAt && !scanBusy && Date.now() - Date.parse(lastScanAt) > scanInterval * 2 + cycleWatchdogTimeout);
-    const healthy = !stopping && !watchdogExiting && status !== "error" && !scanStalled && !missedCycles;
+    const healthy = !stopping && !watchdogExiting && !recycleExiting && status !== "error" && !scanStalled && !missedCycles;
+    const memory = memorySnapshot();
     res.writeHead(healthy ? 200 : 503, { "Content-Type": "application/json" });
     res.end(JSON.stringify({
       healthy, status, workerId, version: VERSION, lastScanAt, scanStartedAt, scanBusy,
-      scanStalled, missedCycles, pendingNotifications: pendingNotifications.length,
+      scanStalled, missedCycles, recycleExiting, pendingNotifications: pendingNotifications.length,
+      inspectionFailures: inspectionFailures.size, uptimeMs: Date.now() - startedAt, memory,
       message: statusMessage, sessionState
     }));
     return;
