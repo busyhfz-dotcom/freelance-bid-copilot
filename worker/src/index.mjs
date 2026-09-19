@@ -426,7 +426,10 @@ async function scanSiteOnce(site) {
         } catch (error) {
           console.error(`inspect ${site} ${item.url}:`, error.message);
           await recordInspectionFailure({ ...item, site }, error).catch((failureError) => console.error("persist inspection failure:", failureError.message));
-          if (browserPoisonedBy(error)) throw error;
+          if (browserPoisonedBy(error)) {
+            await discardContext(site);
+            throw error;
+          }
         } finally {
           await withinTimeout(`${site} project page close`, () => detailPage.close(), 10_000)
             .catch((error) => console.error(`close ${site} project:`, error.message));
