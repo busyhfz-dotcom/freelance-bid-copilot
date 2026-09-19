@@ -183,7 +183,7 @@ test("Worker quarantines poisoned inspections and recycles before heap OOM", () 
   assert.match(worker, /isInspectionSuppressed/);
   assert.match(worker, /recordInspectionFailure/);
   assert.match(worker, /browserPoisonedBy/);
-  assert.match(worker, /if \(browserPoisonedBy\(error\)\) throw error/);
+  assert.match(worker, /if \(browserPoisonedBy\(error\)\) \{\s*await discardContext\(site\);\s*throw error/);
   assert.match(worker, /HEAP_RESTART_MB/);
   assert.match(worker, /MAX_WORKER_UPTIME_HOURS/);
   assert.match(worker, /enforceMemoryWatchdog/);

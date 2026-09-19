@@ -8,6 +8,10 @@ import { blockedRetryDelayMs, describeWorkerError } from "./runtime-policy.mjs";
 import { budgetAllowsApprovedPrice } from "./budget-policy.mjs";
 import { blockedCountry, projectSeenKeys } from "./candidate-policy.mjs";
 
+import { createDeadManMonitor } from "./dead-man-monitor.mjs";
+import { createRecovery } from "./recovery.mjs";
+import { createAtomicWriter } from "./durable-state.mjs";
+
 const VERSION = "0.7.4";
 const root = path.resolve(import.meta.dirname, "../..");
 const dataDir = path.resolve(process.env.BROWSER_DATA_DIR || "/data");
@@ -57,7 +61,6 @@ let approvalBusy = false;
 let scanBusy = false;
 let lastScanAt = "";
 let scanStartedAt = "";
-let watchdogExiting = false;
 let recycleExiting = false;
 let status = "starting";
 let statusMessage = "Worker is starting";
@@ -73,6 +76,52 @@ let seen = new Set();
 let pendingNotifications = [];
 let inspectionFailures = new Map();
 let adapterBundle = "";
+let stateLoaded = false;
+let lastRestart = null;
+const timers = [];
+const recoveryFile = path.join(dataDir, "state/worker-recovery.json");
+const deadManTimeout = clamp(process.env.DEAD_MAN_TIMEOUT_SECONDS, 900, 180, 7200) * 1000;
+const recoveryReportCooldown = 30 * 60_000;
+const deadMan = createDeadManMonitor({ timeoutMs: deadManTimeout,
+  scanIntervalMs: scanInterval, cycleTimeoutMs: cycleWatchdogTimeout });
+const atomicWrite = createAtomicWriter();
+const recovery = createRecovery({
+  onStart(reason) {
+    stopping = true;
+    recycleExiting = true;
+    timers.forEach(clearInterval);
+    status = "restarting";
+    statusMessage = reason;
+    console.error("Worker recovery:", reason);
+  },
+  async persist(reason, metadata) {
+    // Never overwrite a volume that has not finished loading (or was corrupt).
+    if (!stateLoaded) return;
+    const now = Date.now();
+    const previousReportAt = Number(lastRestart?.reportAttemptedAt || 0);
+    const shouldReport = now - previousReportAt >= recoveryReportCooldown || now < previousReportAt;
+    lastRestart = { reason, at: new Date(now).toISOString(), metadata,
+      reportAttemptedAt: shouldReport ? now : previousReportAt, reportSuppressed: !shouldReport };
+    await withinTimeout("recovery durable state", () => Promise.all([
+      persistPendingNotifications(),
+      atomicWrite(seenFile, JSON.stringify([...seen].slice(-5000))),
+      persistInspectionFailures(),
+      atomicWrite(recoveryFile, JSON.stringify(lastRestart))
+    ]), 8000).catch(error => console.error("recovery state:", error.message));
+    await withinTimeout("recovery auth state", () => Promise.all([...contexts.keys()].map(persistContext)), 8000)
+      .catch(error => console.error("recovery auth:", error.message));
+  },
+  async report(reason, metadata) {
+    if (!stateLoaded || lastRestart?.reportSuppressed) return;
+    await Promise.all([
+      heartbeat("restarting", reason),
+      report({ category: "worker", eventType: "worker_recycle", level: "warning",
+        title: "Worker is restarting to recover scanning", message: reason,
+        status: "restarting", metadata: { ...metadata, restartAt: lastRestart?.at } })
+    ]);
+  },
+  async close() { await browser?.close(); }
+});
 
 function clamp(value, fallback, min, max) {
   const number = Number(value);
@@ -113,20 +162,13 @@ async function fileExists(file) {
   try { await fs.access(file); return true; } catch { return false; }
 }
 
-async function atomicWrite(file, value) {
-  await fs.mkdir(path.dirname(file), { recursive: true });
-  const temporary = `${file}.${process.pid}.tmp`;
-  await fs.writeFile(temporary, value, { mode: 0o600 });
-  await fs.rename(temporary, file);
-}
-
 async function readPersistedArray(file, label) {
   try {
     const value = JSON.parse(await fs.readFile(file, "utf8"));
     if (!Array.isArray(value)) throw new Error("expected an array");
     return value;
   } catch (error) {
-    if (error?.code !== "ENOENT") console.error(`read ${label}:`, error.message);
+    if (error?.code !== "ENOENT") throw new Error(`Cannot restore ${label}: ${error.message}`);
     return [];
   }
 }
@@ -194,6 +236,7 @@ async function persistPendingNotifications() {
 }
 
 async function enqueuePendingNotifications(projects) {
+  if (stopping) return 0;
   const known = new Set(pendingNotifications.map(notificationKey));
   const additions = projects.filter((project) => {
     const key = notificationKey(project);
@@ -212,8 +255,10 @@ async function flushPendingNotifications() {
   let queueFailures = 0;
   const batch = pendingNotifications.slice(0, notificationBatchSize);
   for (const project of batch) {
+    if (stopping) break;
     try {
       const result = await api("/api/automation/candidates", { body: project });
+      if (stopping) break; // Keep ambiguous in-flight deliveries for server-side deduplication.
       if (result.created) queuedCount += 1;
       markSeen(project);
       const key = notificationKey(project);
@@ -265,15 +310,18 @@ async function api(pathname, options = {}) {
 }
 
 async function heartbeat(nextStatus = status, message = statusMessage, site = "") {
+  if (stopping && nextStatus !== "restarting") return;
   status = nextStatus;
   statusMessage = message;
   await api("/api/automation/heartbeat", {
+    timeout: stopping ? 8000 : 20_000,
     body: { workerId, status, message, currentSite: site, lastSeenAt: new Date().toISOString(), lastScanAt, sessionState, version: VERSION }
   }).catch((error) => console.error("heartbeat:", error.message));
 }
 
 async function report(input) {
   return api("/api/reports", {
+    timeout: stopping ? 8000 : 20_000,
     body: {
       ...input,
       workerId,
@@ -323,7 +371,8 @@ async function persistContext(site) {
   const context = contexts.get(site);
   if (!context) return;
   try {
-    await withinTimeout(`${site} storage state`, () => context.storageState({ path: markets[site].statePath }));
+    const state = await withinTimeout(`${site} storage state`, () => context.storageState(), 7000);
+    await atomicWrite(markets[site].statePath, JSON.stringify(state));
     await fs.chmod(markets[site].statePath, 0o600);
   } catch (error) { console.error(`persist ${site}:`, error.message); }
 }
@@ -366,7 +415,7 @@ async function scanSite(site) {
 
 async function scanSiteOnce(site) {
     const retryAt = blockedUntil.get(site) || 0;
-    if (retryAt > Date.now()) return [];
+    if (stopping || retryAt > Date.now()) return { candidates: [], successful: false };
     blockedUntil.delete(site);
     await heartbeat("scanning", `Scanning ${site}`, site);
     const context = await contextFor(site);
@@ -380,16 +429,18 @@ async function scanSiteOnce(site) {
         sessionState[site] = block;
         blockedUntil.set(site, Date.now() + blockedSiteRetry);
         await heartbeat("blocked", `${site}: ${block}; manual login or CAPTCHA action is required`, site);
-        return candidates;
+        return { candidates, successful: false };
       }
       sessionState[site] = "ready";
       await withinTimeout(`${site} adapter injection`, () => injectAdapters(listingPage));
       const listing = await withinTimeout(`${site} list extraction`, () => listingPage.evaluate(() => window.BidCopilotAdapter.scanList()));
-      const freshItems = (listing?.items || [])
+      if (!Array.isArray(listing?.items)) throw new Error("Invalid marketplace listing result");
+      const freshItems = listing.items
         .filter((item) => item.url && !wasSeen({ ...item, site }) && !isInspectionSuppressed({ ...item, site }))
         .slice(0, inspectLimit);
       console.log(`scan ${site}: ${listing?.items?.length || 0} listed, ${freshItems.length} fresh`);
       for (const item of freshItems) {
+        if (stopping) break;
         const detailPage = await context.newPage();
         try {
           await withinTimeout(`${site} project navigation`, () => detailPage.goto(item.url, { waitUntil: "domcontentloaded", timeout: browserOperationTimeout }));
@@ -415,14 +466,18 @@ async function scanSiteOnce(site) {
           }
           if (wasSeen(inspected)) continue;
           await clearInspectionFailure({ ...inspected, site });
-          candidates.push({
+          if (stopping) break;
+          const candidate = {
             ...inspected,
             capturedAt: new Date().toISOString(),
             status: "generated",
             bid: "",
             jobScore: Number(item.score || 0),
             matchScore: Number(item.matchScore || item.score || 0)
-          });
+          };
+          // Persist immediately: a later detail-page timeout must not lose earlier projects.
+          await enqueuePendingNotifications([candidate]);
+          candidates.push(candidate);
         } catch (error) {
           console.error(`inspect ${site} ${item.url}:`, error.message);
           await recordInspectionFailure({ ...item, site }, error).catch((failureError) => console.error("persist inspection failure:", failureError.message));
@@ -436,7 +491,7 @@ async function scanSiteOnce(site) {
         }
       }
       if (sessionState[site] === "ready") await heartbeat("scanning", `${site}: session ready`, site);
-      return candidates;
+      return { candidates, successful: !stopping && sessionState[site] === "ready" };
     } finally {
       await withinTimeout(`${site} list page close`, () => listingPage.close()).catch((error) => console.error(`close ${site} list:`, error.message));
       await releaseContext(site);
@@ -446,9 +501,13 @@ async function scanSiteOnce(site) {
 async function scanCycle() {
   const candidates = [];
   let siteFailures = 0;
+  const successfulSites = [];
   for (const site of Object.keys(markets)) {
     try {
-      candidates.push(...await scanSite(site));
+      if (stopping) return;
+      const result = await scanSite(site);
+      candidates.push(...result.candidates);
+      if (result.successful) successfulSites.push(site);
     } catch (error) {
       siteFailures += 1;
       sessionState[site] = "error";
@@ -465,11 +524,13 @@ async function scanCycle() {
       });
     }
   }
+  if (stopping) return;
   const addedToOutbox = await enqueuePendingNotifications(candidates);
   const { queuedCount, queueFailures, attempted } = await flushPendingNotifications();
+  if (stopping) return;
   lastScanAt = new Date().toISOString();
   await atomicWrite(seenFile, JSON.stringify([...seen].slice(-5000)));
-  await heartbeat("idle", `Scan complete; ${queuedCount} notification(s) sent; ${pendingNotifications.length} queued`);
+  await heartbeat(successfulSites.length ? "idle" : "blocked", `Scan complete; ${queuedCount} notification(s) sent; ${pendingNotifications.length} queued`);
   await report({
     category: "scan",
     eventType: "scan_completed",
@@ -488,40 +549,31 @@ async function scanCycle() {
       queuedCount,
       failureCount: queueFailures + siteFailures,
       kayaSession: sessionState.kaya,
-      ponishaSession: sessionState.ponisha
+      ponishaSession: sessionState.ponisha,
+      successfulSites
     }
   });
+  if (!stopping) {
+    deadMan.completeCycle(successfulSites);
+    console.log("scan cycle completed:", JSON.stringify({ successfulSites, pendingNotifications: pendingNotifications.length, lastSuccessfulScanAt: deadMan.snapshot().lastSuccessfulScanAt }));
+  }
 }
 
 async function guardedScanCycle() {
-  if (scanBusy) return;
+  if (stopping || scanBusy) return;
   scanBusy = true;
   scanStartedAt = new Date().toISOString();
-  try { await scanCycle(); } finally { scanBusy = false; scanStartedAt = ""; }
+  deadMan.startCycle();
+  try { await scanCycle(); } finally { scanBusy = false; scanStartedAt = ""; deadMan.endCycle(); }
 }
 
-function scanIsStalled(now = Date.now()) {
-  return Boolean(scanBusy && scanStartedAt && now - Date.parse(scanStartedAt) > cycleWatchdogTimeout);
+function scanIsStalled() {
+  return deadMan.snapshot().reason === "scan_watchdog_restart";
 }
 
-async function requestWorkerRecycle(reason, metadata = {}) {
-  if (recycleExiting || stopping) return;
-  recycleExiting = true;
-  status = "restarting";
-  statusMessage = reason;
-  console.error(reason);
-  await Promise.all([...contexts.keys()].map(persistContext)).catch(() => undefined);
-  await report({
-    category: "worker",
-    eventType: "worker_recycle",
-    level: "warning",
-    title: "Worker برای پایداری ری‌استارت می‌شود",
-    message: reason,
-    status: "restarting",
-    metadata
-  }).catch(() => undefined);
-  await browser?.close().catch(() => undefined);
-  setTimeout(() => process.exit(1), 250).unref();
+function requestWorkerRecycle(reason, metadata = {}) {
+  return recovery.request(reason, { ...metadata, scan: deadMan.snapshot(),
+    pendingNotifications: pendingNotifications.length });
 }
 
 function memorySnapshot() {
@@ -549,23 +601,10 @@ async function enforceMemoryWatchdog() {
 }
 
 async function enforceScanWatchdog() {
-  if (watchdogExiting || recycleExiting || !scanIsStalled()) return;
-  watchdogExiting = true;
-  const message = `Scan watchdog exceeded ${Math.ceil(cycleWatchdogTimeout / 1000)}s; restarting Worker`;
-  status = "error";
-  statusMessage = message;
-  console.error(message);
-  await heartbeat("error", message);
-  await report({
-    category: "worker",
-    eventType: "scan_watchdog_restart",
-    level: "error",
-    title: "Worker برای بازیابی اسکن گیرکرده ری‌استارت می‌شود",
-    message,
-    status: "error",
-    metadata: { scanStartedAt, pendingNotifications: pendingNotifications.length }
-  });
-  await requestWorkerRecycle(message, { scanStartedAt, pendingNotifications: pendingNotifications.length });
+  if (recovery.active || stopping) return;
+  const scan = deadMan.snapshot();
+  if (!scan.stale) return;
+  await requestWorkerRecycle(scan.reason, { eventType: scan.reason, scanStartedAt });
 }
 
 async function submitApproved(approval) {
@@ -657,6 +696,12 @@ async function approvalCycle() {
 async function main() {
   if (!panelUrl.startsWith("https://") && !panelUrl.startsWith("http://127.0.0.1")) throw new Error("PANEL_URL must use HTTPS (localhost is allowed for development)");
   if (workerKey.length < 24 || !copilotKey) throw new Error("WORKER_KEY (24+ chars) and COPILOT_KEY are required");
+  // Supervise initialization too, including a hung browser launch.
+  timers.push(setInterval(() => void enforceScanWatchdog(), 15_000));
+  const memoryTimer = setInterval(() => void enforceMemoryWatchdog(), memoryWatchdogInterval);
+  timers.push(memoryTimer);
+  process.once("SIGTERM", () => void shutdown());
+  process.once("SIGINT", () => void shutdown());
   await fs.mkdir(path.dirname(seenFile), { recursive: true });
   seen = new Set(await readPersistedArray(seenFile, "seen state"));
   pendingNotifications = await readPersistedArray(pendingNotificationsFile, "notification outbox");
@@ -666,8 +711,14 @@ async function main() {
       .filter((item) => item?.key && Number(item.retryAt) > Date.now())
       .map((item) => [item.key, item])
   );
+  try { lastRestart = JSON.parse(await fs.readFile(recoveryFile, "utf8")); }
+  catch (error) { if (error?.code !== "ENOENT") throw error; }
+  stateLoaded = true;
+  if (stopping) return;
   adapterBundle = `${await fs.readFile(path.join(root, "extension/adapter-core.js"), "utf8")}\n${await fs.readFile(path.join(root, "extension/adapters.js"), "utf8")}`;
   browser = await chromium.launch({ headless: true });
+  if (stopping) { await browser.close(); return; }
+  console.log("Worker started:", JSON.stringify({ version: VERSION, deadMan: deadMan.snapshot(), pendingNotifications: pendingNotifications.length, previousRestartAt: lastRestart?.at || null }));
   await heartbeat("idle", "Worker is online");
   await report({
     category: "worker",
@@ -679,6 +730,7 @@ async function main() {
     metadata: { version: VERSION, scanIntervalSeconds: scanInterval / 1000, pendingNotifications: pendingNotifications.length }
   });
   const handleScanError = async (error) => {
+    if (stopping) return;
     const message = describeWorkerError(error);
     console.error("scan:", message);
     await heartbeat("error", message);
@@ -692,34 +744,31 @@ async function main() {
       metadata: { kayaSession: sessionState.kaya, ponishaSession: sessionState.ponisha }
     });
   };
+  if (stopping) return;
   void guardedScanCycle().catch(handleScanError);
   const scanTimer = setInterval(() => void guardedScanCycle().catch(handleScanError), scanInterval);
   const heartbeatTimer = setInterval(() => void heartbeat(), 25_000);
-  const watchdogTimer = setInterval(() => void enforceScanWatchdog(), 15_000);
-  const memoryTimer = setInterval(() => void enforceMemoryWatchdog(), memoryWatchdogInterval);
-  process.once("SIGTERM", () => shutdown([scanTimer, heartbeatTimer, watchdogTimer, memoryTimer]));
-  process.once("SIGINT", () => shutdown([scanTimer, heartbeatTimer, watchdogTimer, memoryTimer]));
+  timers.push(scanTimer, heartbeatTimer);
 }
 
-async function shutdown(timers) {
-  if (stopping) return;
-  stopping = true;
-  timers.forEach(clearInterval);
-  await Promise.all([...contexts.keys()].map(persistContext));
-  await browser?.close().catch(() => undefined);
-  process.exit(0);
+async function shutdown() {
+  return recovery.request("Worker shutdown signal", { eventType: "worker_shutdown" }, 0);
 }
 
 http.createServer((req, res) => {
   if (req.url === "/health") {
     const scanStalled = scanIsStalled();
-    const missedCycles = Boolean(lastScanAt && !scanBusy && Date.now() - Date.parse(lastScanAt) > scanInterval * 2 + cycleWatchdogTimeout);
-    const healthy = !stopping && !watchdogExiting && !recycleExiting && status !== "error" && !scanStalled && !missedCycles;
+    const deadManHealth = deadMan.snapshot();
+    const missedCycles = deadManHealth.reason === "scan_progress_stale";
+    const healthy = !stopping && !recycleExiting && status !== "error" && !deadManHealth.stale;
     const memory = memorySnapshot();
     res.writeHead(healthy ? 200 : 503, { "Content-Type": "application/json" });
     res.end(JSON.stringify({
       healthy, status, workerId, version: VERSION, lastScanAt, scanStartedAt, scanBusy,
-      scanStalled, missedCycles, recycleExiting, pendingNotifications: pendingNotifications.length,
+      scanStalled, missedCycles, recycleExiting, deadMan: deadManHealth,
+      lastSuccessfulScanAt: deadManHealth.lastSuccessfulScanAt,
+      lastRestart: lastRestart ? { at: lastRestart.at, reason: lastRestart.reason } : null,
+      pendingNotifications: pendingNotifications.length,
       inspectionFailures: inspectionFailures.size, uptimeMs: Date.now() - startedAt, memory,
       message: statusMessage, sessionState
     }));
