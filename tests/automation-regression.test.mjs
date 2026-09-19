@@ -176,6 +176,24 @@ test("Worker isolates timed-out project navigations and bounds production pollin
   assert.doesNotMatch(scanSite, /await listingPage\.goto\(item\.url/);
 });
 
+test("Worker quarantines poisoned inspections and recycles before heap OOM", () => {
+  const worker = read("worker/src/index.mjs");
+  const railway = read("railway.toml");
+  assert.match(worker, /inspection-failures\.json/);
+  assert.match(worker, /isInspectionSuppressed/);
+  assert.match(worker, /recordInspectionFailure/);
+  assert.match(worker, /browserPoisonedBy/);
+  assert.match(worker, /if \(browserPoisonedBy\(error\)\) throw error/);
+  assert.match(worker, /HEAP_RESTART_MB/);
+  assert.match(worker, /MAX_WORKER_UPTIME_HOURS/);
+  assert.match(worker, /enforceMemoryWatchdog/);
+  assert.match(worker, /requestWorkerRecycle/);
+  assert.match(worker, /eventType: "worker_recycle"/);
+  assert.match(worker, /memoryTimer/);
+  assert.match(worker, /inspectionFailures: inspectionFailures\.size/);
+  assert.match(railway, /restartPolicyType = "ALWAYS"/);
+});
+
 test("a hung marketplace cannot block the other marketplace or hide Worker health", () => {
   const worker = read("worker/src/index.mjs");
   const scanCycle = worker.slice(worker.indexOf("async function scanCycle"), worker.indexOf("async function guardedScanCycle"));
