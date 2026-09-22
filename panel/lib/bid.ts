@@ -1,4 +1,5 @@
 import type { BidDecision, CompetitionLevel, ProjectPayload } from "./types";
+import { resolveAIProvider } from "./ai-provider";
 import { localDomainMatch, type DomainGate } from "./domain";
 import { decisionFor } from "./bid-policy";
 import { enforceProposalStyle, normalizeDigits, parseBudget, recommendedPriceForBudget } from "./bid-utils";
@@ -312,9 +313,9 @@ export async function generateBid(project: ProjectPayload, previousBids: BidMemo
   const price = recommendedPrice(project);
   const duration = recommendedDuration(project);
 
-  const apiKey = process.env.OPENAI_API_KEY;
-  const model = process.env.OPENAI_MODEL;
-  if (!apiKey || !model) throw new BidGenerationError("AI_NOT_CONFIGURED", "تولید بید هوشمند در پنل تنظیم نشده است؛ برای جلوگیری از متن قالبی، بید جایگزین ساخته نشد.");
+  const provider = resolveAIProvider();
+  if (!provider.configured) throw new BidGenerationError("AI_NOT_CONFIGURED", "تنظیمات AI provider در پنل کامل نیست؛ برای جلوگیری از متن قالبی، بید جایگزین ساخته نشد.");
+  const { apiKey, model } = provider;
 
   const fingerprint = createProjectFingerprint({ title: project.title, description: cleanedBrief, skills: project.skills });
   const uniqueInstruction = buildUniqueBidInstruction(project.title, cleanedBrief || project.description || "");
