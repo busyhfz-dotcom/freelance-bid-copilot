@@ -359,10 +359,10 @@ export async function generateBid(project: ProjectPayload, previousBids: BidMemo
   const kaya = String(project.site || "").toLowerCase() === "kaya";
   let lastFailure = "invalid_response";
 
-  for (let attempt = 0; attempt < 3; attempt += 1) {
+  // Keep interactive generation responsive: one pass across configured providers.\n  // A rejected/limited provider immediately falls through to the next provider.\n  for (let attempt = 0; attempt < 1; attempt += 1) {
     for (const provider of providers) {
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 30_000);
+      const timer = setTimeout(() => controller.abort(), 12_000);
       try {
         const input = [
           { role: "system", content: [{ type: "input_text", text: SYSTEM }] },
