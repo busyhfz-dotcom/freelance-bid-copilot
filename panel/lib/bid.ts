@@ -1,5 +1,5 @@
 import type { BidDecision, CompetitionLevel, ProjectPayload } from "./types";
-import { resolveAIProvider } from "./ai-provider";
+import { resolveAIProviders, type AIProviderConfig } from "./ai-provider";
 import { localDomainMatch, type DomainGate } from "./domain";
 import { decisionFor } from "./bid-policy";
 import { enforceProposalStyle, normalizeDigits, parseBudget, recommendedPriceForBudget } from "./bid-utils";
@@ -48,7 +48,7 @@ Proposal rules:
 - Never quote chunks of the project brief back to the client.
 - Do not invent experience, portfolio items, certifications, team size, guarantees, or facts about the freelancer.
 - If the brief is sparse, keep the bid shorter and ask exactly one targeted question that unlocks the work.
-- Match the project's language. For Persian, use respectful conversational Persian, not bureaucratic wording or exaggerated slang.
+- Match the project's language. For Persian, use respectful conversational Persian, not bureaucratic wording or exaggerated slang.\n- Kaya proposals MUST be written in natural professional English, even when the Kaya page chrome or captured metadata contains Persian.
 - Before writing, identify the stated deliverable, explicit constraints, and the most important unresolved decision. Do not infer a client's personality, budget sensitivity, or urgency without evidence.
 - Choose an angle supported by this brief. For technical work, connect named modules, integrations, or constraints to their implementation impact. For design, discuss the actual artifact and evaluation criteria. For content, show command of audience and format. For a repair, trace the symptom to a plausible inspection path without pretending the cause is known.
 - Each proposal needs one useful execution idea linked to an actual requirement. Do not manufacture risks or call something "the main challenge" without evidence.
@@ -326,7 +326,7 @@ export async function generateBid(project: ProjectPayload, previousBids: BidMemo
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 30_000);
     try {
-      const response = await fetch("https://api.openai.com/v1/responses", {
+      const response = await fetch(provider.endpoint, {
       method: "POST",
       headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -334,13 +334,13 @@ export async function generateBid(project: ProjectPayload, previousBids: BidMemo
         input: [
           { role: "system", content: [{ type: "input_text", text: SYSTEM }] },
           { role: "user", content: [{ type: "input_text", text: JSON.stringify({
-            marketplace: project.site,
+            marketplace: project.site,\n            requiredProposalLanguage: String(project.site || "").toLowerCase() === "kaya" ? "English" : "Match the client brief language",\n            languageInstruction: String(project.site || "").toLowerCase() === "kaya" ? "Write the entire client-facing proposal in fluent professional English. Never switch to Persian because of UI text or metadata." : "Match the language actually used by the client.",
             title: clean(project.title),
             brief: cleanedBrief || "The client provided almost no detail beyond the project title.",
             skills: project.skills || [],
             freelancerProfile: clean(project.freelancerProfile || "").slice(0, 4000),
             locallyRecommendedDurationDays: duration,
-            expectedDepth: complex ? "Explain the relevant technical or execution details in 3-4 substantive paragraphs (roughly 650-1200 Persian characters)." : "Use 2-3 useful paragraphs (roughly 300-750 Persian characters); stay specific rather than padding.",
+            expectedDepth: complex ? "Explain the relevant technical or execution details in 3-4 substantive natural paragraphs." : "Use 2-3 concise useful paragraphs; stay specific rather than padding.",
             generationNonce: generationNonce(project, attempt),
             projectFingerprint: fingerprint,
             fingerprintInstruction: fingerprintInstruction(fingerprint),
