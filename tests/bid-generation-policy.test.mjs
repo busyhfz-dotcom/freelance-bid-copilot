@@ -73,6 +73,8 @@ test("generic fallback phrases are rejected instead of being submitted", () => {
 
 test("bid generation fails closed and retries rejected model output", () => {
   assert.match(bidSource, /AI_NOT_CONFIGURED/);
+  assert.match(bidSource, /resolveAIProvider/);
+  assert.doesNotMatch(bidSource, /const apiKey = process\.env\.OPENAI_API_KEY/);
   assert.match(bidSource, /attempt < 3/);
   assert.match(bidSource, /lastFailure = "similarity_guard"/);
   assert.match(bidSource, /lastFailure = "project_grounding_guard"/);
