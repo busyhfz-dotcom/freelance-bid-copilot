@@ -390,7 +390,22 @@
       }
     }
     const ranked = [...candidates.values()].sort((x, y) => y.score - x.score);
-    return ranked[0]?.score > 0 ? ranked[0].el : null;
+    if (ranked[0]?.score > 0) return ranked[0].el;
+    if (a.id === "kaya") {
+      const pageCandidates = [];
+      for (const selector of selectors) {
+        for (const el of document.querySelectorAll(selector)) {
+          if (!visible(el) || el === proposal) continue;
+          const metadata = { identity: fieldIdentityText(el), context: nearbyText(el) };
+          const score = core.fieldRoleScore(kind, metadata);
+          if (score > 0) pageCandidates.push({ el, score });
+          if (pageCandidates.length >= 24) break;
+        }
+      }
+      pageCandidates.sort((x, y) => y.score - x.score);
+      if (pageCandidates[0]?.score > 0) return pageCandidates[0].el;
+    }
+    return null;
   }
 
   function findSubmit(a) {
