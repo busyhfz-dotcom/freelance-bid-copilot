@@ -349,70 +349,69 @@ export async function generateBid(project: ProjectPayload, previousBids: BidMemo
   const cleanedBrief = cleanProjectBrief(project);
   const price = recommendedPrice(project);
   const duration = recommendedDuration(project);
-
-  const provider = resolveAIProvider();
-  if (!provider.configured) throw new BidGenerationError("AI_NOT_CONFIGURED", "تنظیمات AI provider در پنل کامل نیست؛ برای جلوگیری از متن قالبی، بید جایگزین ساخته نشد.");
-  const { apiKey, model } = provider;
+  const providers = resolveAIProviders();
+  if (!providers.length) throw new BidGenerationError("AI_NOT_CONFIGURED", "هیچ AI provider قابل استفاده‌ای تنظیم نشده است.");
 
   const fingerprint = createProjectFingerprint({ title: project.title, description: cleanedBrief, skills: project.skills });
   const uniqueInstruction = buildUniqueBidInstruction(project.title, cleanedBrief || project.description || "");
   const complex = cleanedBrief.length > 900 || (project.skills || []).length >= 5;
   const priorPatternSamples = previousBids.slice(0, 8).map((item) => clean(item.proposal || "").slice(0, 220)).filter(Boolean);
+  const kaya = String(project.site || "").toLowerCase() === "kaya";
   let lastFailure = "invalid_response";
+
   for (let attempt = 0; attempt < 3; attempt += 1) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 30_000);
-    try {
-      const response = await fetch(provider.endpoint, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model,
-        input: [
+    for (const provider of providers) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 30_000);
+      try {
+        const input = [
           { role: "system", content: [{ type: "input_text", text: SYSTEM }] },
           { role: "user", content: [{ type: "input_text", text: JSON.stringify({
-            marketplace: project.site,\n            requiredProposalLanguage: String(project.site || "").toLowerCase() === "kaya" ? "English" : "Match the client brief language",\n            languageInstruction: String(project.site || "").toLowerCase() === "kaya" ? "Write the entire client-facing proposal in fluent professional English. Never switch to Persian because of UI text or metadata." : "Match the language actually used by the client.",
+            marketplace: project.site,
+            requiredProposalLanguage: kaya ? "English" : "Match the client brief language",
+            languageInstruction: kaya ? "Write the entire client-facing proposal in fluent professional English. Never switch to Persian because of UI text or metadata." : "Match the language actually used by the client.",
             title: clean(project.title),
             brief: cleanedBrief || "The client provided almost no detail beyond the project title.",
             skills: project.skills || [],
             freelancerProfile: clean(project.freelancerProfile || "").slice(0, 4000),
             locallyRecommendedDurationDays: duration,
-            expectedDepth: complex ? "Explain the relevant technical or execution details in 3-4 substantive natural paragraphs." : "Use 2-3 concise useful paragraphs; stay specific rather than padding.",
+            expectedDepth: complex ? "Explain relevant execution details in 3-4 substantive natural paragraphs." : "Use 2-3 concise useful paragraphs; stay specific rather than padding.",
             generationNonce: generationNonce(project, attempt),
             projectFingerprint: fingerprint,
             fingerprintInstruction: fingerprintInstruction(fingerprint),
             originalityReminder: uniqueInstruction,
             priorBidPatternsToAvoid: priorPatternSamples,
-            regenerationInstruction: attempt > 0 ? "The previous draft was rejected. Re-read the brief, select different concrete details, and rebuild the reasoning from scratch. Do not merely paraphrase, reorder sentences, or change price." : "",
-            humanReviewStandard: "Show the same kind of comprehension as a freelancer who can distinguish existing work from missing work, name relevant requested features, explain their implementation impact in plain language, and be candid about scope. Do not copy this instruction as wording."
+            regenerationInstruction: attempt > 0 ? "The previous draft was rejected. Re-read the brief and rebuild the reasoning from scratch." : "",
+            humanReviewStandard: "Show real comprehension, name relevant requested features, explain implementation impact plainly, and be candid about scope."
           }) }] }
-        ],
-        max_output_tokens: 650
-      }),
-      signal: controller.signal
-      });
-      if (!response.ok) {
-        lastFailure = `provider_${response.status}`;
-        if ([400, 401, 403].includes(response.status)) break;
-        continue;
+        ];
+
+        const { response, readText } = await callAIProvider(provider, input, controller.signal);
+        if (!response.ok) {
+          lastFailure = `${provider.provider}_${response.status}`;
+          continue;
+        }
+
+        const parsed = parseAI(await readText());
+        if (!parsed?.proposal || typeof parsed.proposal !== "string") { lastFailure = `${provider.provider}_invalid_response`; continue; }
+        const aiDuration = /^\d{1,2}$/.test(String(parsed.durationDays || "")) ? String(parsed.durationDays) : duration;
+        const proposal = enforceProposalStyle(parsed.proposal, complex ? 1400 : 900);
+        if (!proposal) { lastFailure = "generic_or_empty"; continue; }
+        if (kaya && /[\u0600-\u06ff]/.test(proposal)) { lastFailure = "kaya_non_english"; continue; }
+
+        const grounding = proposalGroundingScore(proposal, fingerprint);
+        const minimumSignals = complex ? 4 : cleanedBrief.length >= 180 ? 3 : 1;
+        if (grounding.matched.length < minimumSignals) { lastFailure = "project_grounding_guard"; continue; }
+        const scored = scoreResult(project, proposal, cleanedBrief, price, aiDuration);
+        if (scored.bidQualityScore < 70) { lastFailure = "quality_guard"; continue; }
+        if (shouldRegenerateBid(proposal, previousBids, 0.62, project.title)) { lastFailure = "similarity_guard"; continue; }
+        return scored;
+      } catch (error) {
+        lastFailure = error instanceof Error && error.name === "AbortError" ? `${provider.provider}_timeout` : `${provider.provider}_failure`;
+      } finally {
+        clearTimeout(timer);
       }
-      const parsed = parseAI(await readText());
-      if (!parsed?.proposal || typeof parsed.proposal !== "string") { lastFailure = "invalid_response"; continue; }
-      const aiDuration = /^\d{1,2}$/.test(String(parsed.durationDays || "")) ? String(parsed.durationDays) : duration;
-      const proposal = enforceProposalStyle(parsed.proposal, complex ? 1400 : 900);
-      if (!proposal) { lastFailure = "generic_or_empty"; continue; }
-      const grounding = proposalGroundingScore(proposal, fingerprint);
-      const minimumSignals = complex ? 4 : cleanedBrief.length >= 180 ? 3 : 1;
-      if (grounding.matched.length < minimumSignals) { lastFailure = "project_grounding_guard"; continue; }
-      const scored = scoreResult(project, proposal, cleanedBrief, price, aiDuration);
-      if (scored.bidQualityScore < 70) { lastFailure = "quality_guard"; continue; }
-      if (shouldRegenerateBid(proposal, previousBids, 0.62, project.title)) { lastFailure = "similarity_guard"; continue; }
-      return scored;
-    } catch (error) {
-      lastFailure = error instanceof Error && error.name === "AbortError" ? "provider_timeout" : "provider_failure";
-    } finally {
-      clearTimeout(timer);
     }
   }
-  throw new BidGenerationError("AI_GENERATION_REJECTED", `بید قابل‌قبولی تولید نشد (${lastFailure})؛ متن قالبی جایگزین نشد.`);
+  throw new BidGenerationError("AI_GENERATION_REJECTED", `بید قابل‌قبولی تولید نشد (${lastFailure})؛ همه providerهای تنظیم‌شده امتحان شدند.`);
 }
