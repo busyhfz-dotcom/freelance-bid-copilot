@@ -252,6 +252,43 @@ function parseAI(text: string) {
   try { return JSON.parse(trimmed); } catch { return null; }
 }
 
+function chatCompletionText(data: any): string {
+  const content = data?.choices?.[0]?.message?.content;
+  if (typeof content === "string") return content.trim();
+  if (content && typeof content === "object" && !Array.isArray(content)) return JSON.stringify(content);
+  if (Array.isArray(content)) return content.map((part: any) => part?.text || part?.content || "").filter(Boolean).join("\n").trim();
+  return "";
+}
+
+async function callAIProvider(provider: AIProviderConfig, input: any[], signal: AbortSignal) {
+  if (provider.provider === "openai") {
+    const response = await fetch(provider.endpoint, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${provider.apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ model: provider.model, input, max_output_tokens: 650 }),
+      signal
+    });
+    return { response, readText: async () => extractResponseText(await response.json()) };
+  }
+
+  const headers: Record<string, string> = { Authorization: `Bearer ${provider.apiKey}`, "Content-Type": "application/json" };
+  if (provider.provider === "openrouter") {
+    headers["HTTP-Referer"] = "https://www.freelancerpanel.ir";
+    headers["X-Title"] = "Freelance Bid Copilot";
+  }
+  const messages = input.map((item: any) => ({
+    role: item.role,
+    content: (item.content || []).map((part: any) => part?.text || "").filter(Boolean).join("\n")
+  }));
+  const response = await fetch(`${provider.baseUrl}/chat/completions`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ model: provider.model, messages, max_tokens: 900, response_format: { type: "json_object" } }),
+    signal
+  });
+  return { response, readText: async () => chatCompletionText(await response.json()) };
+}
+
 export class BidGenerationError extends Error {
   readonly code: string;
   constructor(code: string, message: string) {
@@ -359,7 +396,7 @@ export async function generateBid(project: ProjectPayload, previousBids: BidMemo
         if ([400, 401, 403].includes(response.status)) break;
         continue;
       }
-      const parsed = parseAI(extractResponseText(await response.json()));
+      const parsed = parseAI(await readText());
       if (!parsed?.proposal || typeof parsed.proposal !== "string") { lastFailure = "invalid_response"; continue; }
       const aiDuration = /^\d{1,2}$/.test(String(parsed.durationDays || "")) ? String(parsed.durationDays) : duration;
       const proposal = enforceProposalStyle(parsed.proposal, complex ? 1400 : 900);
