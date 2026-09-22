@@ -100,7 +100,7 @@ export function register() {
     const provider = resolveAIProvider();
     if (!provider.configured || provider.provider === "openai") return originalFetch(input, init);
 
-    const isOpenRouter = provider.baseUrl.includes("openrouter.ai");
+    const isOpenRouter = provider.provider === "openrouter" || provider.baseUrl.includes("openrouter.ai");
     // Preserve all bid-writing prompts, quality guards, similarity guards, retries,
     // JSON schema and token limits. Only replace OpenRouter's random free router
     // with the fast free model that has already produced successful bids in production.

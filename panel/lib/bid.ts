@@ -1,5 +1,5 @@
 import type { BidDecision, CompetitionLevel, ProjectPayload } from "./types";
-import { resolveAIProvider } from "./ai-provider";
+import { resolveAIProviders, type AIProviderConfig } from "./ai-provider";
 import { localDomainMatch, type DomainGate } from "./domain";
 import { decisionFor } from "./bid-policy";
 import { enforceProposalStyle, normalizeDigits, parseBudget, recommendedPriceForBudget } from "./bid-utils";
@@ -48,7 +48,7 @@ Proposal rules:
 - Never quote chunks of the project brief back to the client.
 - Do not invent experience, portfolio items, certifications, team size, guarantees, or facts about the freelancer.
 - If the brief is sparse, keep the bid shorter and ask exactly one targeted question that unlocks the work.
-- Match the project's language. For Persian, use respectful conversational Persian, not bureaucratic wording or exaggerated slang.
+- Match the project's language. For Persian, use respectful conversational Persian, not bureaucratic wording or exaggerated slang.\n- Kaya proposals MUST be written in natural professional English, even when the Kaya page chrome or captured metadata contains Persian.
 - Before writing, identify the stated deliverable, explicit constraints, and the most important unresolved decision. Do not infer a client's personality, budget sensitivity, or urgency without evidence.
 - Choose an angle supported by this brief. For technical work, connect named modules, integrations, or constraints to their implementation impact. For design, discuss the actual artifact and evaluation criteria. For content, show command of audience and format. For a repair, trace the symptom to a plausible inspection path without pretending the cause is known.
 - Each proposal needs one useful execution idea linked to an actual requirement. Do not manufacture risks or call something "the main challenge" without evidence.
@@ -252,6 +252,43 @@ function parseAI(text: string) {
   try { return JSON.parse(trimmed); } catch { return null; }
 }
 
+function chatCompletionText(data: any): string {
+  const content = data?.choices?.[0]?.message?.content;
+  if (typeof content === "string") return content.trim();
+  if (content && typeof content === "object" && !Array.isArray(content)) return JSON.stringify(content);
+  if (Array.isArray(content)) return content.map((part: any) => part?.text || part?.content || "").filter(Boolean).join("\n").trim();
+  return "";
+}
+
+async function callAIProvider(provider: AIProviderConfig, input: any[], signal: AbortSignal) {
+  if (provider.provider === "openai") {
+    const response = await fetch(provider.endpoint, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${provider.apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ model: provider.model, input, max_output_tokens: 650 }),
+      signal
+    });
+    return { response, readText: async () => extractResponseText(await response.json()) };
+  }
+
+  const headers: Record<string, string> = { Authorization: `Bearer ${provider.apiKey}`, "Content-Type": "application/json" };
+  if (provider.provider === "openrouter") {
+    headers["HTTP-Referer"] = "https://www.freelancerpanel.ir";
+    headers["X-Title"] = "Freelance Bid Copilot";
+  }
+  const messages = input.map((item: any) => ({
+    role: item.role,
+    content: (item.content || []).map((part: any) => part?.text || "").filter(Boolean).join("\n")
+  }));
+  const response = await fetch(`${provider.baseUrl}/chat/completions`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ model: provider.model, messages, max_tokens: 900, response_format: { type: "json_object" } }),
+    signal
+  });
+  return { response, readText: async () => chatCompletionText(await response.json()) };
+}
+
 export class BidGenerationError extends Error {
   readonly code: string;
   constructor(code: string, message: string) {
@@ -312,70 +349,69 @@ export async function generateBid(project: ProjectPayload, previousBids: BidMemo
   const cleanedBrief = cleanProjectBrief(project);
   const price = recommendedPrice(project);
   const duration = recommendedDuration(project);
-
-  const provider = resolveAIProvider();
-  if (!provider.configured) throw new BidGenerationError("AI_NOT_CONFIGURED", "تنظیمات AI provider در پنل کامل نیست؛ برای جلوگیری از متن قالبی، بید جایگزین ساخته نشد.");
-  const { apiKey, model } = provider;
+  const providers = resolveAIProviders();
+  if (!providers.length) throw new BidGenerationError("AI_NOT_CONFIGURED", "هیچ AI provider قابل استفاده‌ای تنظیم نشده است.");
 
   const fingerprint = createProjectFingerprint({ title: project.title, description: cleanedBrief, skills: project.skills });
   const uniqueInstruction = buildUniqueBidInstruction(project.title, cleanedBrief || project.description || "");
   const complex = cleanedBrief.length > 900 || (project.skills || []).length >= 5;
   const priorPatternSamples = previousBids.slice(0, 8).map((item) => clean(item.proposal || "").slice(0, 220)).filter(Boolean);
+  const kaya = String(project.site || "").toLowerCase() === "kaya";
   let lastFailure = "invalid_response";
+
   for (let attempt = 0; attempt < 3; attempt += 1) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 30_000);
-    try {
-      const response = await fetch("https://api.openai.com/v1/responses", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model,
-        input: [
+    for (const provider of providers) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 30_000);
+      try {
+        const input = [
           { role: "system", content: [{ type: "input_text", text: SYSTEM }] },
           { role: "user", content: [{ type: "input_text", text: JSON.stringify({
             marketplace: project.site,
+            requiredProposalLanguage: kaya ? "English" : "Match the client brief language",
+            languageInstruction: kaya ? "Write the entire client-facing proposal in fluent professional English. Never switch to Persian because of UI text or metadata." : "Match the language actually used by the client.",
             title: clean(project.title),
             brief: cleanedBrief || "The client provided almost no detail beyond the project title.",
             skills: project.skills || [],
             freelancerProfile: clean(project.freelancerProfile || "").slice(0, 4000),
             locallyRecommendedDurationDays: duration,
-            expectedDepth: complex ? "Explain the relevant technical or execution details in 3-4 substantive paragraphs (roughly 650-1200 Persian characters)." : "Use 2-3 useful paragraphs (roughly 300-750 Persian characters); stay specific rather than padding.",
+            expectedDepth: complex ? "Explain relevant execution details in 3-4 substantive natural paragraphs." : "Use 2-3 concise useful paragraphs; stay specific rather than padding.",
             generationNonce: generationNonce(project, attempt),
             projectFingerprint: fingerprint,
             fingerprintInstruction: fingerprintInstruction(fingerprint),
             originalityReminder: uniqueInstruction,
             priorBidPatternsToAvoid: priorPatternSamples,
-            regenerationInstruction: attempt > 0 ? "The previous draft was rejected. Re-read the brief, select different concrete details, and rebuild the reasoning from scratch. Do not merely paraphrase, reorder sentences, or change price." : "",
-            humanReviewStandard: "Show the same kind of comprehension as a freelancer who can distinguish existing work from missing work, name relevant requested features, explain their implementation impact in plain language, and be candid about scope. Do not copy this instruction as wording."
+            regenerationInstruction: attempt > 0 ? "The previous draft was rejected. Re-read the brief and rebuild the reasoning from scratch." : "",
+            humanReviewStandard: "Show real comprehension, name relevant requested features, explain implementation impact plainly, and be candid about scope."
           }) }] }
-        ],
-        max_output_tokens: 650
-      }),
-      signal: controller.signal
-      });
-      if (!response.ok) {
-        lastFailure = `provider_${response.status}`;
-        if ([400, 401, 403].includes(response.status)) break;
-        continue;
+        ];
+
+        const { response, readText } = await callAIProvider(provider, input, controller.signal);
+        if (!response.ok) {
+          lastFailure = `${provider.provider}_${response.status}`;
+          continue;
+        }
+
+        const parsed = parseAI(await readText());
+        if (!parsed?.proposal || typeof parsed.proposal !== "string") { lastFailure = `${provider.provider}_invalid_response`; continue; }
+        const aiDuration = /^\d{1,2}$/.test(String(parsed.durationDays || "")) ? String(parsed.durationDays) : duration;
+        const proposal = enforceProposalStyle(parsed.proposal, complex ? 1400 : 900);
+        if (!proposal) { lastFailure = "generic_or_empty"; continue; }
+        if (kaya && /[\u0600-\u06ff]/.test(proposal)) { lastFailure = "kaya_non_english"; continue; }
+
+        const grounding = proposalGroundingScore(proposal, fingerprint);
+        const minimumSignals = complex ? 4 : cleanedBrief.length >= 180 ? 3 : 1;
+        if (grounding.matched.length < minimumSignals) { lastFailure = "project_grounding_guard"; continue; }
+        const scored = scoreResult(project, proposal, cleanedBrief, price, aiDuration);
+        if (scored.bidQualityScore < 70) { lastFailure = "quality_guard"; continue; }
+        if (shouldRegenerateBid(proposal, previousBids, 0.62, project.title)) { lastFailure = "similarity_guard"; continue; }
+        return scored;
+      } catch (error) {
+        lastFailure = error instanceof Error && error.name === "AbortError" ? `${provider.provider}_timeout` : `${provider.provider}_failure`;
+      } finally {
+        clearTimeout(timer);
       }
-      const parsed = parseAI(extractResponseText(await response.json()));
-      if (!parsed?.proposal || typeof parsed.proposal !== "string") { lastFailure = "invalid_response"; continue; }
-      const aiDuration = /^\d{1,2}$/.test(String(parsed.durationDays || "")) ? String(parsed.durationDays) : duration;
-      const proposal = enforceProposalStyle(parsed.proposal, complex ? 1400 : 900);
-      if (!proposal) { lastFailure = "generic_or_empty"; continue; }
-      const grounding = proposalGroundingScore(proposal, fingerprint);
-      const minimumSignals = complex ? 4 : cleanedBrief.length >= 180 ? 3 : 1;
-      if (grounding.matched.length < minimumSignals) { lastFailure = "project_grounding_guard"; continue; }
-      const scored = scoreResult(project, proposal, cleanedBrief, price, aiDuration);
-      if (scored.bidQualityScore < 70) { lastFailure = "quality_guard"; continue; }
-      if (shouldRegenerateBid(proposal, previousBids, 0.62, project.title)) { lastFailure = "similarity_guard"; continue; }
-      return scored;
-    } catch (error) {
-      lastFailure = error instanceof Error && error.name === "AbortError" ? "provider_timeout" : "provider_failure";
-    } finally {
-      clearTimeout(timer);
     }
   }
-  throw new BidGenerationError("AI_GENERATION_REJECTED", `بید قابل‌قبولی تولید نشد (${lastFailure})؛ متن قالبی جایگزین نشد.`);
+  throw new BidGenerationError("AI_GENERATION_REJECTED", `بید قابل‌قبولی تولید نشد (${lastFailure})؛ همه providerهای تنظیم‌شده امتحان شدند.`);
 }
