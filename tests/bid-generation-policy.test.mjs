@@ -88,7 +88,12 @@ test("bid generation fails closed while bounding provider failover latency", () 
   assert.match(bidSource, /attempt < 2/);
   assert.match(bidSource, /generationDeadline/);
   assert.match(bidSource, /lastFailure = "similarity_guard"/);
-  assert.match(bidSource, /semantic_quality_guard/);\n  assert.match(bidSource, /proposalQualityAssessment/);\n  assert.match(bidSource, /qualityRetryNeeded/);
+  assert.match(bidSource, /semantic_quality_guard/);
+  assert.match(bidSource, /proposalQualityAssessment/);
+  assert.match(bidSource, /qualityRetryNeeded/);
+  assert.match(bidSource, /bidQualityScore < 84/);
+  assert.match(bidSource, /genericHits >= 1/);
+  assert.match(bidSource, /cleanedBrief\.length >= 220 \? 4/);
   assert.match(bidSource, /throw new BidGenerationError\("AI_GENERATION_REJECTED"/);
   assert.doesNotMatch(bidSource, /function fallbackProposal/);
 });
