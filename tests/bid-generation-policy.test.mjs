@@ -84,6 +84,9 @@ test("bid generation fails closed while bounding provider failover latency", () 
   assert.match(bidSource, /responsePreview/);
   assert.match(bidSource, /QUALITY_OPENROUTER_SYSTEM/);
   assert.match(bidSource, /sort: "latency"/);
+  assert.match(bidSource, /reasoning = \{ exclude: true \}/);
+  assert.match(bidSource, /looksLikeReasoningLeak/);
+  assert.match(bidSource, /reasoning_leak/);
   assert.match(bidSource, /max_tokens: provider\.provider === "openrouter" \? 700 : 650/);
   assert.match(bidSource, /attempt < 2/);
   assert.match(bidSource, /generationDeadline/);
