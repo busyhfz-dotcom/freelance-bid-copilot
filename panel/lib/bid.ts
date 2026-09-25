@@ -71,6 +71,27 @@ Return JSON only with keys: proposal, durationDays.
 
 const GENERATION_BUDGET_MS = 18_000;
 const PROVIDER_TIMEOUT_MS = 9_000;
+const FREE_ROUTER_TIMEOUT_MS = 5_000;
+
+function providerTimeout(provider: AIProviderConfig, remainingMs: number) {
+  const freeRouter = provider.provider === "openrouter" && provider.model === "openrouter/free";
+  return Math.min(freeRouter ? FREE_ROUTER_TIMEOUT_MS : PROVIDER_TIMEOUT_MS, remainingMs);
+}
+
+async function providerErrorSummary(response: Response) {
+  try {
+    const raw = await response.clone().text();
+    if (!raw) return "";
+    try {
+      const parsed = JSON.parse(raw);
+      return String(parsed?.error?.message || parsed?.message || "").slice(0, 240);
+    } catch {
+      return raw.slice(0, 240);
+    }
+  } catch {
+    return "";
+  }
+}
 
 function clean(s = "") {
   return s.replace(/\s+/g, " ").trim();
@@ -374,7 +395,7 @@ export async function generateBid(project: ProjectPayload, previousBids: BidMemo
       }
       const providerStartedAt = Date.now();
       const controller = new AbortController();
-      const providerTimeoutMs = Math.min(PROVIDER_TIMEOUT_MS, remainingMs);
+      const providerTimeoutMs = providerTimeout(provider, remainingMs);
       const timer = setTimeout(() => controller.abort(), providerTimeoutMs);
       try {
         const input = [
@@ -406,7 +427,8 @@ export async function generateBid(project: ProjectPayload, previousBids: BidMemo
             provider: provider.provider,
             model: provider.model,
             outcome: lastFailure,
-            durationMs: Date.now() - providerStartedAt
+            durationMs: Date.now() - providerStartedAt,
+            upstreamError: await providerErrorSummary(response)
           });
           continue;
         }
