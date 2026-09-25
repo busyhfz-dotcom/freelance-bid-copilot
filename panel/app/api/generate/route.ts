@@ -36,12 +36,13 @@ export async function POST(req: NextRequest) {
 
   const previous = (await listProjects()).filter((item) => item.url !== project.url).slice(0, 30)
     .map((item) => ({ proposal: item.bid, title: item.title, createdAt: item.capturedAt }));
+  const generationStartedAt = Date.now();
   let generated;
   try {
     generated = await generateBid(project, previous);
   } catch (error) {
     const code = error instanceof BidGenerationError ? error.code : "AI_GENERATION_FAILED";
-    console.error("[bid-generation]", { code, site: project.site, url: project.url });
+    console.error("[bid-generation]", { code, site: project.site, durationMs: Date.now() - generationStartedAt });
     return NextResponse.json({ error: error instanceof Error ? error.message : "Bid generation failed", code }, { status: 503, headers: cors() });
   }
   const id = project.id || createHash("sha1").update(`${project.site}|${project.url}`).digest("hex").slice(0, 18);
@@ -53,5 +54,12 @@ export async function POST(req: NextRequest) {
     status: "generated"
   };
   await saveProject(record);
+  console.info("[bid-generation]", {
+    outcome: "success",
+    site: project.site,
+    durationMs: Date.now() - generationStartedAt,
+    decision: record.decision,
+    quality: record.bidQualityScore
+  });
   return NextResponse.json(record, { headers: cors() });
 }

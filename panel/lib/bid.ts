@@ -69,6 +69,9 @@ Proposal rules:
 Return JSON only with keys: proposal, durationDays.
 - durationDays: integer string such as "4".`;
 
+const GENERATION_BUDGET_MS = 18_000;
+const PROVIDER_TIMEOUT_MS = 9_000;
+
 function clean(s = "") {
   return s.replace(/\s+/g, " ").trim();
 }
@@ -283,7 +286,7 @@ async function callAIProvider(provider: AIProviderConfig, input: any[], signal: 
   const response = await fetch(`${provider.baseUrl}/chat/completions`, {
     method: "POST",
     headers,
-    body: JSON.stringify({ model: provider.model, messages, max_tokens: 900, response_format: { type: "json_object" } }),
+    body: JSON.stringify({ model: provider.model, messages, max_tokens: 650, response_format: { type: "json_object" } }),
     signal
   });
   return { response, readText: async () => chatCompletionText(await response.json()) };
@@ -355,14 +358,24 @@ export async function generateBid(project: ProjectPayload, previousBids: BidMemo
   const fingerprint = createProjectFingerprint({ title: project.title, description: cleanedBrief, skills: project.skills });
   const uniqueInstruction = buildUniqueBidInstruction(project.title, cleanedBrief || project.description || "");
   const complex = cleanedBrief.length > 900 || (project.skills || []).length >= 5;
-  const priorPatternSamples = previousBids.slice(0, 8).map((item) => clean(item.proposal || "").slice(0, 220)).filter(Boolean);
+  const priorPatternSamples = previousBids.slice(0, 4).map((item) => clean(item.proposal || "").slice(0, 160)).filter(Boolean);
   const kaya = String(project.site || "").toLowerCase() === "kaya";
   let lastFailure = "invalid_response";
 
-  // Keep interactive generation responsive: one pass across configured providers.\n  // A rejected/limited provider immediately falls through to the next provider.\n  for (let attempt = 0; attempt < 1; attempt += 1) {
+  // Keep interactive generation responsive: one pass across configured providers.
+  // A rejected or rate-limited provider immediately falls through to the next provider.
+  const generationDeadline = Date.now() + GENERATION_BUDGET_MS;
+  for (let attempt = 0; attempt < 1; attempt += 1) {
     for (const provider of providers) {
+      const remainingMs = generationDeadline - Date.now();
+      if (remainingMs < 1_200) {
+        lastFailure = "generation_deadline";
+        break;
+      }
+      const providerStartedAt = Date.now();
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 12_000);
+      const providerTimeoutMs = Math.min(PROVIDER_TIMEOUT_MS, remainingMs);
+      const timer = setTimeout(() => controller.abort(), providerTimeoutMs);
       try {
         const input = [
           { role: "system", content: [{ type: "input_text", text: SYSTEM }] },
@@ -373,7 +386,7 @@ export async function generateBid(project: ProjectPayload, previousBids: BidMemo
             title: clean(project.title),
             brief: cleanedBrief || "The client provided almost no detail beyond the project title.",
             skills: project.skills || [],
-            freelancerProfile: clean(project.freelancerProfile || "").slice(0, 4000),
+            freelancerProfile: clean(project.freelancerProfile || "").slice(0, 2500),
             locallyRecommendedDurationDays: duration,
             expectedDepth: complex ? "Explain relevant execution details in 3-4 substantive natural paragraphs." : "Use 2-3 concise useful paragraphs; stay specific rather than padding.",
             generationNonce: generationNonce(project, attempt),
@@ -389,6 +402,12 @@ export async function generateBid(project: ProjectPayload, previousBids: BidMemo
         const { response, readText } = await callAIProvider(provider, input, controller.signal);
         if (!response.ok) {
           lastFailure = `${provider.provider}_${response.status}`;
+          console.warn("[bid-provider]", {
+            provider: provider.provider,
+            model: provider.model,
+            outcome: lastFailure,
+            durationMs: Date.now() - providerStartedAt
+          });
           continue;
         }
 
@@ -405,9 +424,21 @@ export async function generateBid(project: ProjectPayload, previousBids: BidMemo
         const scored = scoreResult(project, proposal, cleanedBrief, price, aiDuration);
         if (scored.bidQualityScore < 70) { lastFailure = "quality_guard"; continue; }
         if (shouldRegenerateBid(proposal, previousBids, 0.62, project.title)) { lastFailure = "similarity_guard"; continue; }
+        console.info("[bid-provider]", {
+          provider: provider.provider,
+          model: provider.model,
+          outcome: "accepted",
+          durationMs: Date.now() - providerStartedAt
+        });
         return scored;
       } catch (error) {
         lastFailure = error instanceof Error && error.name === "AbortError" ? `${provider.provider}_timeout` : `${provider.provider}_failure`;
+        console.warn("[bid-provider]", {
+          provider: provider.provider,
+          model: provider.model,
+          outcome: lastFailure,
+          durationMs: Date.now() - providerStartedAt
+        });
       } finally {
         clearTimeout(timer);
       }

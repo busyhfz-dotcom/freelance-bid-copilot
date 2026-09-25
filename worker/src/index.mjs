@@ -29,6 +29,8 @@ const inspectionRetryDelay = clamp(process.env.INSPECTION_RETRY_MINUTES, 30, 5, 
 const memoryWatchdogInterval = clamp(process.env.MEMORY_WATCHDOG_SECONDS, 30, 15, 300) * 1000;
 const heapRestartMb = clamp(process.env.HEAP_RESTART_MB, 300, 192, 420);
 const maxWorkerUptime = clamp(process.env.MAX_WORKER_UPTIME_HOURS, 6, 1, 24) * 60 * 60_000;
+const browserRecycleCooldown = clamp(process.env.BROWSER_RECYCLE_COOLDOWN_MINUTES, 5, 1, 60) * 60_000;
+const deadManTimeout = clamp(process.env.DEAD_MAN_TIMEOUT_SECONDS, 900, 300, 3600) * 1000;
 const port = clamp(process.env.PORT, 8080, 1, 65535);
 
 const markets = {
@@ -62,6 +64,9 @@ let recycleExiting = false;
 let status = "starting";
 let statusMessage = "Worker is starting";
 const startedAt = Date.now();
+let browserStartedAt = startedAt;
+let lastBrowserRecycleAt = 0;
+let queuedRecycle = null;
 const contexts = new Map();
 const locks = new Map();
 const blockedUntil = new Map();
@@ -213,8 +218,14 @@ async function flushPendingNotifications() {
   const batch = pendingNotifications.slice(0, notificationBatchSize);
   for (const project of batch) {
     try {
+      console.log(`telegram candidate: sending ${project.site || "unknown"} ${project.url || project.title || "unknown"}`);
       const result = await api("/api/automation/candidates", { body: project });
-      if (result.created) queuedCount += 1;
+      if (result.created) {
+        queuedCount += 1;
+        console.log(`telegram candidate: delivered ${project.site || "unknown"} ${project.url || project.title || "unknown"}`);
+      } else {
+        console.log(`telegram candidate: skipped ${result.skipped || "duplicate"} ${project.site || "unknown"} ${project.url || project.title || "unknown"}`);
+      }
       markSeen(project);
       const key = notificationKey(project);
       pendingNotifications = pendingNotifications.filter((candidate) => notificationKey(candidate) !== key);
@@ -415,6 +426,7 @@ async function scanSiteOnce(site) {
           }
           if (wasSeen(inspected)) continue;
           await clearInspectionFailure({ ...inspected, site });
+          console.log(`candidate inspected: ${site} ${inspected.url}`);
           candidates.push({
             ...inspected,
             capturedAt: new Date().toISOString(),
@@ -468,6 +480,7 @@ async function scanCycle() {
   const addedToOutbox = await enqueuePendingNotifications(candidates);
   const { queuedCount, queueFailures, attempted } = await flushPendingNotifications();
   lastScanAt = new Date().toISOString();
+  console.log(`scan cycle: candidates=${candidates.length} outboxAdded=${addedToOutbox} attempted=${attempted} delivered=${queuedCount} pending=${pendingNotifications.length} failures=${queueFailures + siteFailures}`);
   await atomicWrite(seenFile, JSON.stringify([...seen].slice(-5000)));
   await heartbeat("idle", `Scan complete; ${queuedCount} notification(s) sent; ${pendingNotifications.length} queued`);
   await report({
@@ -497,31 +510,89 @@ async function guardedScanCycle() {
   if (scanBusy) return;
   scanBusy = true;
   scanStartedAt = new Date().toISOString();
-  try { await scanCycle(); } finally { scanBusy = false; scanStartedAt = ""; }
+  try {
+    await scanCycle();
+  } finally {
+    scanBusy = false;
+    scanStartedAt = "";
+    if (queuedRecycle && !stopping) {
+      const pending = queuedRecycle;
+      queuedRecycle = null;
+      await recycleBrowser(pending.reason, pending.metadata, false);
+    }
+  }
 }
 
 function scanIsStalled(now = Date.now()) {
   return Boolean(scanBusy && scanStartedAt && now - Date.parse(scanStartedAt) > cycleWatchdogTimeout);
 }
 
-async function requestWorkerRecycle(reason, metadata = {}) {
-  if (recycleExiting || stopping) return;
+function scanDeadManTriggered(now = Date.now()) {
+  return Boolean(lastScanAt && !scanBusy && now - Date.parse(lastScanAt) > deadManTimeout);
+}
+
+async function recycleBrowser(reason, metadata = {}, force = false) {
+  if (recycleExiting || stopping) return false;
+  if (scanBusy && !force) {
+    queuedRecycle = { reason, metadata };
+    console.warn(`browser recycle queued until scan completes: ${reason}`);
+    return false;
+  }
+
   recycleExiting = true;
   status = "restarting";
   statusMessage = reason;
-  console.error(reason);
-  await Promise.all([...contexts.keys()].map(persistContext)).catch(() => undefined);
-  await report({
-    category: "worker",
-    eventType: "worker_recycle",
-    level: "warning",
-    title: "Worker برای پایداری ری‌استارت می‌شود",
-    message: reason,
-    status: "restarting",
-    metadata
-  }).catch(() => undefined);
-  await browser?.close().catch(() => undefined);
-  setTimeout(() => process.exit(1), 250).unref();
+  console.warn(reason);
+  const previousBrowser = browser;
+
+  try {
+    await Promise.all([...contexts.keys()].map(persistContext)).catch(() => undefined);
+    contexts.clear();
+    await withinTimeout("browser recycle close", () => previousBrowser?.close(), 10_000)
+      .catch((error) => console.error("browser recycle close:", error.message));
+
+    browser = await chromium.launch({ headless: true });
+    browserStartedAt = Date.now();
+    lastBrowserRecycleAt = browserStartedAt;
+    queuedRecycle = null;
+    status = "idle";
+    statusMessage = "Browser recycled; scanning can continue";
+
+    await heartbeat("idle", statusMessage);
+    await report({
+      category: "worker",
+      eventType: "browser_recycled",
+      level: "warning",
+      title: "مرورگر Worker بازیابی شد",
+      message: reason,
+      status: "idle",
+      metadata: { ...metadata, browserStartedAt: new Date(browserStartedAt).toISOString() }
+    }).catch(() => undefined);
+    console.log(`browser recycled: ${reason}`);
+    return true;
+  } catch (error) {
+    const message = `Browser recycle failed: ${error instanceof Error ? error.message : String(error)}`;
+    status = "error";
+    statusMessage = message;
+    console.error(message);
+    await report({
+      category: "worker",
+      eventType: "browser_recycle_failed",
+      level: "error",
+      title: "بازیابی مرورگر Worker ناموفق بود",
+      message,
+      status: "error",
+      metadata
+    }).catch(() => undefined);
+    setTimeout(() => process.exit(1), 1_000).unref();
+    return false;
+  } finally {
+    recycleExiting = false;
+  }
+}
+
+async function requestWorkerRecycle(reason, metadata = {}, force = false) {
+  return recycleBrowser(reason, metadata, force);
 }
 
 function memorySnapshot() {
@@ -538,34 +609,49 @@ function memorySnapshot() {
 async function enforceMemoryWatchdog() {
   if (recycleExiting || stopping) return;
   const memory = memorySnapshot();
-  const uptimeMs = Date.now() - startedAt;
-  if (memory.heapUsedMb >= heapRestartMb) {
-    await requestWorkerRecycle(`Memory watchdog reached ${memory.heapUsedMb}MB heap; restarting before OOM`, { ...memory, uptimeMs, heapRestartMb });
+  const browserUptimeMs = Date.now() - browserStartedAt;
+  const recycleCoolingDown = lastBrowserRecycleAt && Date.now() - lastBrowserRecycleAt < browserRecycleCooldown;
+
+  if (memory.heapUsedMb >= heapRestartMb && !recycleCoolingDown) {
+    await requestWorkerRecycle(
+      `Memory watchdog reached ${memory.heapUsedMb}MB heap; recycling Chromium before OOM`,
+      { ...memory, browserUptimeMs, heapRestartMb }
+    );
     return;
   }
-  if (uptimeMs >= maxWorkerUptime) {
-    await requestWorkerRecycle(`Scheduled Worker recycle after ${Math.round(uptimeMs / 60_000)} minutes`, { ...memory, uptimeMs, maxWorkerUptime });
+  if (browserUptimeMs >= maxWorkerUptime && !recycleCoolingDown) {
+    await requestWorkerRecycle(
+      `Scheduled Chromium recycle after ${Math.round(browserUptimeMs / 60_000)} minutes`,
+      { ...memory, browserUptimeMs, maxWorkerUptime }
+    );
   }
 }
 
 async function enforceScanWatchdog() {
-  if (watchdogExiting || recycleExiting || !scanIsStalled()) return;
+  if (watchdogExiting || recycleExiting) return;
+  const stalled = scanIsStalled();
+  const dead = scanDeadManTriggered();
+  if (!stalled && !dead) return;
+
   watchdogExiting = true;
-  const message = `Scan watchdog exceeded ${Math.ceil(cycleWatchdogTimeout / 1000)}s; restarting Worker`;
+  const message = stalled
+    ? `Scan watchdog exceeded ${Math.ceil(cycleWatchdogTimeout / 1000)}s; recycling Chromium`
+    : `Dead-man watchdog saw no completed scan for ${Math.ceil(deadManTimeout / 1000)}s; recycling Chromium`;
   status = "error";
   statusMessage = message;
   console.error(message);
   await heartbeat("error", message);
   await report({
     category: "worker",
-    eventType: "scan_watchdog_restart",
+    eventType: stalled ? "scan_watchdog_recycle" : "dead_man_recycle",
     level: "error",
-    title: "Worker برای بازیابی اسکن گیرکرده ری‌استارت می‌شود",
+    title: stalled ? "مرورگر Worker برای بازیابی اسکن گیرکرده ری‌استارت می‌شود" : "چرخه اسکن Worker متوقف شده بود",
     message,
     status: "error",
-    metadata: { scanStartedAt, pendingNotifications: pendingNotifications.length }
-  });
-  await requestWorkerRecycle(message, { scanStartedAt, pendingNotifications: pendingNotifications.length });
+    metadata: { scanStartedAt, lastScanAt, pendingNotifications: pendingNotifications.length }
+  }).catch(() => undefined);
+  await requestWorkerRecycle(message, { scanStartedAt, lastScanAt, pendingNotifications: pendingNotifications.length }, stalled);
+  watchdogExiting = false;
 }
 
 async function submitApproved(approval) {
@@ -668,6 +754,7 @@ async function main() {
   );
   adapterBundle = `${await fs.readFile(path.join(root, "extension/adapter-core.js"), "utf8")}\n${await fs.readFile(path.join(root, "extension/adapters.js"), "utf8")}`;
   browser = await chromium.launch({ headless: true });
+  browserStartedAt = Date.now();
   await heartbeat("idle", "Worker is online");
   await report({
     category: "worker",
@@ -714,14 +801,17 @@ http.createServer((req, res) => {
   if (req.url === "/health") {
     const scanStalled = scanIsStalled();
     const missedCycles = Boolean(lastScanAt && !scanBusy && Date.now() - Date.parse(lastScanAt) > scanInterval * 2 + cycleWatchdogTimeout);
-    const healthy = !stopping && !watchdogExiting && !recycleExiting && status !== "error" && !scanStalled && !missedCycles;
+    const deadManTriggered = scanDeadManTriggered();
+    const healthy = !stopping && !watchdogExiting && !recycleExiting && status !== "error" && !scanStalled && !missedCycles && !deadManTriggered;
     const memory = memorySnapshot();
     res.writeHead(healthy ? 200 : 503, { "Content-Type": "application/json" });
     res.end(JSON.stringify({
       healthy, status, workerId, version: VERSION, lastScanAt, scanStartedAt, scanBusy,
-      scanStalled, missedCycles, recycleExiting, pendingNotifications: pendingNotifications.length,
-      inspectionFailures: inspectionFailures.size, uptimeMs: Date.now() - startedAt, memory,
-      message: statusMessage, sessionState
+      scanStalled, missedCycles, deadManTriggered, recycleExiting, pendingNotifications: pendingNotifications.length,
+      inspectionFailures: inspectionFailures.size, uptimeMs: Date.now() - startedAt,
+      browserUptimeMs: Date.now() - browserStartedAt,
+      lastBrowserRecycleAt: lastBrowserRecycleAt ? new Date(lastBrowserRecycleAt).toISOString() : "",
+      memory, message: statusMessage, sessionState
     }));
     return;
   }

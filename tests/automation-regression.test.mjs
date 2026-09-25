@@ -27,6 +27,8 @@ test("Telegram sends notification-only project links", () => {
   assert.doesNotMatch(telegram.slice(telegram.indexOf("sendProjectApprovalRequest"), telegram.indexOf("sendBidApprovalRequest")), /callback_data/);
   assert.match(candidates, /status: "notified"/);
   assert.match(candidates, /eventType: "new_project_sent"/);
+  assert.match(candidates, /\[telegram-delivery\]/);
+  assert.match(read("worker/src/index.mjs"), /telegram candidate: delivered/);
 });
 
 test("new project notifications require only valid marketplace identity", () => {
@@ -94,15 +96,17 @@ test("Worker persists every fresh inspected project before delivery and scans in
   assert.match(worker, /scanBusy/);
 });
 
-test("Worker uses a durable notification outbox and restarts a stalled full cycle", () => {
+test("Worker uses a durable notification outbox and recovers stalled scan delivery", () => {
   const worker = read("worker/src/index.mjs");
   assert.match(worker, /pending-notifications\.json/);
   assert.match(worker, /readPersistedArray\(pendingNotificationsFile/);
   assert.match(worker, /persistPendingNotifications\(\)/);
   assert.match(worker, /WORKER_WATCHDOG_SECONDS/);
+  assert.match(worker, /DEAD_MAN_TIMEOUT_SECONDS/);
   assert.match(worker, /enforceScanWatchdog/);
-  assert.match(worker, /scan_watchdog_restart/);
-  assert.match(worker, /process\.exit\(1\)/);
+  assert.match(worker, /scan_watchdog_recycle/);
+  assert.match(worker, /dead_man_recycle/);
+  assert.match(worker, /recycleBrowser/);
   assert.match(worker, /missedCycles/);
 });
 
@@ -183,12 +187,13 @@ test("Worker quarantines poisoned inspections and recycles before heap OOM", () 
   assert.match(worker, /isInspectionSuppressed/);
   assert.match(worker, /recordInspectionFailure/);
   assert.match(worker, /browserPoisonedBy/);
-  assert.match(worker, /if \(browserPoisonedBy\(error\)\) throw error/);
+  assert.match(worker, /if \(browserPoisonedBy\(error\)\)/);
   assert.match(worker, /HEAP_RESTART_MB/);
   assert.match(worker, /MAX_WORKER_UPTIME_HOURS/);
+  assert.match(worker, /BROWSER_RECYCLE_COOLDOWN_MINUTES/);
   assert.match(worker, /enforceMemoryWatchdog/);
   assert.match(worker, /requestWorkerRecycle/);
-  assert.match(worker, /eventType: "worker_recycle"/);
+  assert.match(worker, /eventType: "browser_recycled"/);
   assert.match(worker, /memoryTimer/);
   assert.match(worker, /inspectionFailures: inspectionFailures\.size/);
   assert.match(railway, /restartPolicyType = "ALWAYS"/);
@@ -200,7 +205,8 @@ test("a hung marketplace cannot block the other marketplace or hide Worker healt
   assert.match(scanCycle, /for \(const site of Object\.keys\(markets\)\)/);
   assert.match(scanCycle, /siteFailures \+= 1/);
   assert.match(scanCycle, /site_scan_failed/);
-  assert.match(worker, /scanBusy = false; scanStartedAt = ""/);
+  assert.match(worker, /scanBusy = false/);
+  assert.match(worker, /scanStartedAt = ""/);
 });
 
 test("Telegram stays exclusive to new project notifications", () => {

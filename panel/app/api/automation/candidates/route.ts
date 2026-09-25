@@ -68,9 +68,21 @@ export async function POST(req: NextRequest) {
         budget: record.project.budget || "نامشخص"
       }
     }));
+    console.info("[telegram-delivery]", {
+      outcome: "sent",
+      site: record.site,
+      projectId: record.projectId,
+      messageId: message.messageId
+    });
     return NextResponse.json({ approval: attached || queued.record, created: true }, { status: 201 });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Telegram delivery failed";
+    console.error("[telegram-delivery]", {
+      outcome: "failed",
+      site: record.site,
+      projectId: record.projectId,
+      error: message
+    });
     await saveReport(createReport({
       category: "telegram",
       eventType: "new_project_delivery_failed",
