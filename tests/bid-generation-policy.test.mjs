@@ -81,8 +81,10 @@ test("bid generation fails closed while bounding provider failover latency", () 
   assert.match(bidSource, /providerTimeout\(provider, remainingMs\)/);
   assert.match(bidSource, /provider\.fallbackModels\?\.length/);
   assert.match(bidSource, /provider\.fallbackModels\.slice\(0, 2\)/);
-  assert.match(bidSource, /responsePreview/);
-  assert.match(bidSource, /QUALITY_OPENROUTER_SYSTEM/);
+  assert.doesNotMatch(bidSource, /responsePreview/);
+  assert.match(bidSource, /const SYSTEM =/);
+  assert.match(bidSource, /Object\.keys\(fields\)\.sort\(\)/);
+  assert.doesNotMatch(bidSource, /labelledProposal|jsonCandidates/);
   assert.match(bidSource, /sort: "latency"/);
   assert.match(bidSource, /reasoning = \{ exclude: true \}/);
   assert.match(bidSource, /looksLikeReasoningLeak/);
@@ -114,7 +116,7 @@ test("extension settings verifies authenticated panel health and provider-aware 
   assert.match(provider, /openai\/gpt-oss-120b/);
   assert.match(provider, /provider === "custom" && \/openrouter\\\.ai\/i/);
   assert.match(provider, /nvidia\/nemotron-3-ultra-550b-a55b:free/);
-  assert.match(provider, /poolside\/laguna-s-2\.1:free/);
+  assert.match(provider, /google\/gemma-4-31b-it:free/);
   assert.match(provider, /inclusionai\/ling-3\.0-flash:free/);
   assert.match(provider, /OPENAI_FALLBACK_ENABLED/);
   assert.doesNotMatch(provider, /nex-agi\/nex-n2\.5-mini:free/);
