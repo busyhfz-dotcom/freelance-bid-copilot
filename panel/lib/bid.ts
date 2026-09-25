@@ -71,11 +71,17 @@ Return JSON only with keys: proposal, durationDays.
 
 const GENERATION_BUDGET_MS = 18_000;
 const PROVIDER_TIMEOUT_MS = 9_000;
-const FREE_ROUTER_TIMEOUT_MS = 5_000;
+const FREE_ROUTER_TIMEOUT_MS = 4_000;
+const FREE_MODEL_TIMEOUT_MS = 6_000;
 
 function providerTimeout(provider: AIProviderConfig, remainingMs: number) {
-  const freeRouter = provider.provider === "openrouter" && provider.model === "openrouter/free";
-  return Math.min(freeRouter ? FREE_ROUTER_TIMEOUT_MS : PROVIDER_TIMEOUT_MS, remainingMs);
+  if (provider.provider === "openrouter" && provider.model === "openrouter/free") {
+    return Math.min(FREE_ROUTER_TIMEOUT_MS, remainingMs);
+  }
+  if (provider.provider === "openrouter" && provider.model.endsWith(":free")) {
+    return Math.min(FREE_MODEL_TIMEOUT_MS, remainingMs);
+  }
+  return Math.min(PROVIDER_TIMEOUT_MS, remainingMs);
 }
 
 async function providerErrorSummary(response: Response) {
