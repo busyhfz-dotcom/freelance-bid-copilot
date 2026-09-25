@@ -15,9 +15,9 @@ const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 const GROQ_DEFAULT_MODEL = "openai/gpt-oss-120b";
 const OPENROUTER_DEFAULT_MODEL = "openrouter/free";
 export const OPENROUTER_FREE_FALLBACK_MODELS = [
-  "nvidia/nemotron-3-ultra-550b-a55b:free",
-  "poolside/laguna-s-2.1:free",
-  "inclusionai/ling-3.0-flash:free"
+  "inclusionai/ling-3.0-flash:free",
+  "inclusionai/ling-3.0-flash-vl:free",
+  "poolside/laguna-s-2.1:free"
 ];
 
 function env(name: string) {
