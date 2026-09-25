@@ -75,13 +75,13 @@ test("bid generation fails closed while bounding provider failover latency", () 
   assert.match(bidSource, /AI_NOT_CONFIGURED/);
   assert.match(bidSource, /resolveAIProviders/);
   assert.doesNotMatch(bidSource, /const apiKey = process\.env\.OPENAI_API_KEY/);
-  assert.match(bidSource, /GENERATION_BUDGET_MS = 18_000/);
+  assert.match(bidSource, /GENERATION_BUDGET_MS = 15_000/);
   assert.match(bidSource, /PROVIDER_TIMEOUT_MS = 9_000/);
-  assert.match(bidSource, /OPENROUTER_FAILOVER_TIMEOUT_MS = 12_000/);
+  assert.match(bidSource, /OPENROUTER_FAILOVER_TIMEOUT_MS = 10_000/);
   assert.match(bidSource, /providerTimeout\(provider, remainingMs\)/);
   assert.match(bidSource, /requestBody\.model = OPENROUTER_FREE_FALLBACK_MODELS\[0\]/);
   assert.match(bidSource, /requestBody\.models = OPENROUTER_FREE_FALLBACK_MODELS\.slice\(1\)/);
-  assert.match(bidSource, /responsePreview/);
+  assert.match(bidSource, /responsePreview/);\n  assert.match(bidSource, /FAST_OPENROUTER_SYSTEM/);\n  assert.match(bidSource, /sort: "latency"/);\n  assert.match(bidSource, /max_tokens: provider\.provider === "openrouter" \? 420 : 650/);
   assert.match(bidSource, /attempt < 1/);
   assert.match(bidSource, /generationDeadline/);
   assert.match(bidSource, /lastFailure = "similarity_guard"/);
