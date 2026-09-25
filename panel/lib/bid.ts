@@ -84,6 +84,9 @@ Rules:
 - Do not merely repeat the brief; connect requirements to how the work will be handled.
 - Never invent experience, portfolio items, credentials, guarantees, team size or facts not provided.
 - Avoid generic filler such as "I can do this", "I am ready", "high quality", "best result", "according to your needs", or their Persian equivalents.
+- Never write a generic opening like "سلام وقت بخیر، پروژه شما را بررسی کردم" or "با توجه به توضیحات پروژه". Start with the work itself.
+- Use concrete nouns from the brief instead of vague words like "موارد"، "بخش‌ها"، "نیازها" or "جزئیات" when the brief provides specific names.
+- Do not praise the project or the client. Spend every sentence proving understanding or reducing execution risk.
 - No headings, bullet lists, boilerplate sections, marketplace metadata, budget repetition, URLs or canned closing.
 - Match the client's language. Kaya must always be natural professional English.
 - Prefer 2-4 natural paragraphs. Keep simple jobs concise; give technically coupled jobs enough detail to prove understanding.
@@ -287,7 +290,7 @@ function proposalQualityAssessment(
 ) {
   const grounding = proposalGroundingScore(proposal, fingerprint);
   const reasons: string[] = [];
-  const minimumSignals = complex ? 5 : cleanedBrief.length >= 220 ? 3 : cleanedBrief.length >= 80 ? 2 : 1;
+  const minimumSignals = complex ? 5 : cleanedBrief.length >= 220 ? 4 : cleanedBrief.length >= 80 ? 2 : 1;
   const firstChunkTokens = new Set(specificityTokens(proposal.slice(0, 260)));
   const groundedEarly = grounding.matched.some((token) => firstChunkTokens.has(token));
   const hasExecutionDecision =
@@ -298,7 +301,7 @@ function proposalQualityAssessment(
   if (grounding.matched.length < minimumSignals) reasons.push("insufficient_project_details");
   if (cleanedBrief.length >= 100 && !groundedEarly) reasons.push("generic_opening");
   if (!hasExecutionDecision) reasons.push("no_execution_decision");
-  if (genericHits >= 2) reasons.push("generic_sales_language");
+  if (genericHits >= 1) reasons.push("generic_sales_language");
   if (proposal.trim().length < minimumLength) reasons.push("too_shallow");
 
   return { ok: reasons.length === 0, reasons, grounding };
@@ -579,7 +582,7 @@ export async function generateBid(project: ProjectPayload, previousBids: BidMemo
             regenerationInstruction: attempt > 0
               ? `The previous draft was rejected for: ${rejectedReasons.join(", ") || lastFailure}. Rewrite from scratch. Do not paraphrase the rejected draft. Rejected draft: ${rejectedDraft.slice(0, 700)}`
               : "",
-            humanReviewStandard: "The bid should sound like a capable freelancer who understood the brief, not a generic AI proposal. Specificity and useful judgment matter more than enthusiasm."
+            humanReviewStandard: "The bid must read like a capable freelancer who understood this exact brief, not a generic AI proposal. Prefer useful judgment, concrete implementation choices and natural language over enthusiasm. Reject yourself and rewrite if the same text could fit another project."
           }) }] }
         ];
 
@@ -645,7 +648,7 @@ export async function generateBid(project: ProjectPayload, previousBids: BidMemo
         }
 
         const scored = scoreResult(project, proposal, cleanedBrief, price, aiDuration);
-        if (scored.bidQualityScore < 78) {
+        if (scored.bidQualityScore < 84) {
           lastFailure = "quality_guard";
           qualityRetryNeeded = true;
           rejectedDraft = proposal;
