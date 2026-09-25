@@ -76,7 +76,7 @@ test("bid generation fails closed while bounding provider failover latency", () 
   assert.match(bidSource, /resolveAIProviders/);
   assert.doesNotMatch(bidSource, /const apiKey = process\.env\.OPENAI_API_KEY/);
   assert.match(bidSource, /GENERATION_BUDGET_MS = 18_000/);
-  assert.match(bidSource, /PROVIDER_TIMEOUT_MS = 9_000/);
+  assert.match(bidSource, /PROVIDER_TIMEOUT_MS = 9_000/);\n  assert.match(bidSource, /OPENROUTER_FAILOVER_TIMEOUT_MS = 12_000/);
   assert.match(bidSource, /FREE_ROUTER_TIMEOUT_MS = 4_000/);
   assert.match(bidSource, /FREE_MODEL_TIMEOUT_MS = 6_000/);
   assert.match(bidSource, /providerTimeout\(provider, remainingMs\)/);
