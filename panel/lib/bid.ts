@@ -1,5 +1,5 @@
 import type { BidDecision, CompetitionLevel, ProjectPayload } from "./types";
-import { resolveAIProviders, type AIProviderConfig } from "./ai-provider";
+import { OPENROUTER_FREE_FALLBACK_MODELS, resolveAIProviders, type AIProviderConfig } from "./ai-provider";
 import { localDomainMatch, type DomainGate } from "./domain";
 import { decisionFor } from "./bid-policy";
 import { enforceProposalStyle, normalizeDigits, parseBudget, recommendedPriceForBudget } from "./bid-utils";
@@ -71,15 +71,11 @@ Return JSON only with keys: proposal, durationDays.
 
 const GENERATION_BUDGET_MS = 18_000;
 const PROVIDER_TIMEOUT_MS = 9_000;
-const FREE_ROUTER_TIMEOUT_MS = 4_000;
-const FREE_MODEL_TIMEOUT_MS = 6_000;
+const OPENROUTER_FAILOVER_TIMEOUT_MS = 12_000;
 
 function providerTimeout(provider: AIProviderConfig, remainingMs: number) {
-  if (provider.provider === "openrouter" && provider.model === "openrouter/free") {
-    return Math.min(FREE_ROUTER_TIMEOUT_MS, remainingMs);
-  }
-  if (provider.provider === "openrouter" && provider.model.endsWith(":free")) {
-    return Math.min(FREE_MODEL_TIMEOUT_MS, remainingMs);
+  if (provider.provider === "openrouter") {
+    return Math.min(OPENROUTER_FAILOVER_TIMEOUT_MS, remainingMs);
   }
   return Math.min(PROVIDER_TIMEOUT_MS, remainingMs);
 }
@@ -310,10 +306,28 @@ async function callAIProvider(provider: AIProviderConfig, input: any[], signal: 
     role: item.role,
     content: (item.content || []).map((part: any) => part?.text || "").filter(Boolean).join("\n")
   }));
+  const requestBody: Record<string, unknown> = {
+    model: provider.model,
+    messages,
+    max_tokens: 650
+  };
+
+  if (provider.provider === "openrouter") {
+    requestBody.models = provider.model === "openrouter/free"
+      ? OPENROUTER_FREE_FALLBACK_MODELS
+      : [provider.model, ...OPENROUTER_FREE_FALLBACK_MODELS.filter((model) => model !== provider.model)];
+    requestBody.provider = { allow_fallbacks: true };
+    // Do not require response_format here: several of the healthiest current free
+    // endpoints do not support it. The system prompt still requires JSON and parseAI
+    // validates the returned payload before a bid can be accepted.
+  } else {
+    requestBody.response_format = { type: "json_object" };
+  }
+
   const response = await fetch(`${provider.baseUrl}/chat/completions`, {
     method: "POST",
     headers,
-    body: JSON.stringify({ model: provider.model, messages, max_tokens: 650, response_format: { type: "json_object" } }),
+    body: JSON.stringify(requestBody),
     signal
   });
   return { response, readText: async () => chatCompletionText(await response.json()) };
