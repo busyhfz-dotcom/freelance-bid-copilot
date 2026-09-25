@@ -30,8 +30,11 @@ function providerConfig(
   baseUrl: string
 ): AIProviderConfig {
   const normalized = normalizeBaseUrl(baseUrl);
+  const effectiveProvider: AIProviderName = provider === "custom" && /openrouter\.ai/i.test(normalized)
+    ? "openrouter"
+    : provider;
   return {
-    provider,
+    provider: effectiveProvider,
     apiKey,
     model,
     baseUrl: normalized,
