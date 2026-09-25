@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { isAuthorized, readsRequireAuthorization } from "@/lib/auth";
 import { listProjects, updateProjectStatus } from "@/lib/store";
 import type { ProjectRecord } from "@/lib/types";
+import { looksLikeReasoningLeak } from "@/lib/bid";
 
 export const runtime = "nodejs";
 
@@ -21,7 +22,10 @@ export async function GET(req: NextRequest) {
   if (readsRequireAuthorization() && !isAuthorized(req)) {
     return NextResponse.json({ error: "Unauthorized panel key" }, { status: 401, headers: cors() });
   }
-  return NextResponse.json({ projects: await listProjects() }, { headers: cors() });
+  const projects = (await listProjects()).map((project) => looksLikeReasoningLeak(project.bid || "")
+    ? { ...project, bid: "", guardReady: false, status: "error" as const }
+    : project);
+  return NextResponse.json({ projects }, { headers: cors() });
 }
 
 export async function PATCH(req: NextRequest) {

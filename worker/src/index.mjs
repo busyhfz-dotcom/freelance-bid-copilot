@@ -8,7 +8,7 @@ import { blockedRetryDelayMs, describeWorkerError } from "./runtime-policy.mjs";
 import { budgetAllowsApprovedPrice } from "./budget-policy.mjs";
 import { blockedCountry, projectSeenKeys } from "./candidate-policy.mjs";
 
-const VERSION = "0.7.4";
+const VERSION = "0.7.5";
 const root = path.resolve(import.meta.dirname, "../..");
 const dataDir = path.resolve(process.env.BROWSER_DATA_DIR || "/data");
 const panelUrl = String(process.env.PANEL_URL || "").replace(/\/$/, "");

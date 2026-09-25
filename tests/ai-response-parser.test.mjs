@@ -1,54 +1,41 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { parseAI } from "../panel/lib/bid.ts";
+import fs from "node:fs";
+import path from "node:path";
+import ts from "../panel/node_modules/typescript/lib/typescript.js";
 
-test("parseAI accepts fenced JSON", () => {
-  const parsed = parseAI('```json\\n{"proposal":"برای checkout، validation سمت سرور و state خطا را جدا بررسی می‌کنم.","durationDays":"4"}\\n```');
-  assert.equal(parsed?.durationDays, "4");
-  assert.match(parsed?.proposal || "", /checkout/);
+const source = fs.readFileSync(path.resolve(import.meta.dirname, "../panel/lib/bid.ts"), "utf8");
+const parserSource = source.slice(source.indexOf("type ParsedAI ="), source.indexOf("function chatCompletionText"));
+const compiled = ts.transpileModule(parserSource, { compilerOptions: { module: ts.ModuleKind.ESNext } }).outputText;
+const { looksLikeReasoningLeak, parseAI } = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString("base64")}`);
+
+const good = JSON.stringify({
+  proposal: "برای وب‌اپ مدیریت مشتری، اطلاعات مشتری و پیگیری فروش را در یک جریان روشن طراحی می‌کنم تا وضعیت هر سرنخ قابل مشاهده باشد. آیا نقش‌های کاربری و سطح دسترسی آنها مشخص شده است؟",
+  durationDays: "7"
 });
 
-test("parseAI extracts embedded JSON and alternate duration key", () => {
-  const parsed = parseAI('Here is the result:\\n{"proposal":"برای اتصال درگاه، callback و idempotency پرداخت را جدا بررسی می‌کنم.","duration_days":5}\\nDone.');
-  assert.equal(parsed?.durationDays, 5);
-  assert.match(parsed?.proposal || "", /callback/);
+test("accepts only the agreed proposal JSON contract", () => {
+  assert.match(parseAI(good)?.proposal || "", /پیگیری فروش/);
+  assert.equal(parseAI("  " + good + "  ")?.durationDays, "7");
+  assert.equal(parseAI("پیشنهاد: متن آماده برای کارفرما"), null);
+  assert.equal(parseAI("Here is the result:\n" + good), null);
+  assert.equal(parseAI(JSON.stringify({ proposal: "برای وب اپ مدیریت مشتری ساختار مشتری و فروش را پیاده می‌کنم.", duration_days: 7 })), null);
+  assert.equal(parseAI(JSON.stringify({ proposal: "برای وب اپ مدیریت مشتری ساختار مشتری و فروش را پیاده می‌کنم.", durationDays: "7", analysis: "private" })), null);
 });
 
-test("parseAI accepts a plain grounded proposal body", () => {
-  const parsed = parseAI("برای صفحه محصول، state موجودی و قیمت را از داده واقعی جدا می‌کنم تا افزودن به سبد بدون ریدایرکت ناخواسته اجرا شود.");
-  assert.match(parsed?.proposal || "", /سبد/);
-});
-
-test("parseAI does not accept analysis-only output", () => {
-  assert.equal(parseAI("Reasoning: I should think about the user request before producing the proposal."), null);
-});
-
-test("parseAI rejects exposed thinking-process output", () => {
+test("rejects exposed reasoning even when followed by valid JSON", () => {
   const leaked = [
     "Here's a thinking process:",
-    "",
     "1. **Analyze the Request:**",
     "- **Input:** A JSON object with project details from a freelance marketplace.",
     "- **Title:** ساخت وب اپلیکیشن مدیریت مشتری",
     "- **Brief:** The client provided almost no detail beyond the project title.",
     "- **Skills:** []",
-    "- **Expected Depth:** Write 2-3 concise, specific paragraphs."
+    good
   ].join("\n");
   assert.equal(parseAI(leaked), null);
-});
-
-test("parseAI rejects field-by-field internal notes even without an analysis heading", () => {
-  const leaked = [
-    "**Input:** project JSON",
-    "**Title:** CRM web app",
-    "**Brief:** customer management and sales",
-    "**Constraints:** Persian response",
-    "I should now draft the response."
-  ].join("\n");
-  assert.equal(parseAI(leaked), null);
-});
-
-test("parseAI still accepts a real proposal that uses analytical language naturally", () => {
-  const proposal = "برای وب‌اپ مدیریت مشتری، ساختار مشتری‌ها، پیگیری فروش و وضعیت هر سرنخ را از ابتدا جدا می‌کنم تا گزارش‌گیری و توسعه بعدی به داده‌های پراکنده وابسته نشود. بعد از مشخص شدن نقش‌های کاربری، جریان ثبت و پیگیری مشتری را روی همان مدل داده پیاده می‌کنم.";
-  assert.equal(parseAI(proposal)?.proposal, proposal);
+  assert.equal(looksLikeReasoningLeak(leaked), true);
+  assert.equal(parseAI(JSON.stringify({ proposal: "Analysis: first parse the brief. " + JSON.parse(good).proposal, durationDays: "7" })), null);
+  assert.equal(parseAI("<think>internal notes</think>\n" + good), null);
+  assert.equal(parseAI(JSON.stringify({ proposal: "**Title:** CRM. " + JSON.parse(good).proposal, durationDays: "7" })), null);
 });

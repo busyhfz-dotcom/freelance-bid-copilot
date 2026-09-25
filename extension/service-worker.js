@@ -1,6 +1,6 @@
 importScripts("domain-engine.js", "guard-policy.js");
 
-const ENGINE_VERSION = "0.7.4";
+const ENGINE_VERSION = "0.7.5";
 
 const DEFAULTS = {
   panelUrl: "https://www.freelancerpanel.ir",
@@ -49,7 +49,7 @@ async function panelRequest(path, options = {}) {
   if (!r.ok) throw new Error(d.error || `Panel error ${r.status}`);
   return d;
 }
-async function generate(project) { const s = await settings(); const data = await panelRequest("/api/generate", { method: "POST", body: JSON.stringify({ ...project, freelancerProfile: s.freelancerProfile || "", preferredDomains: s.preferredDomains || [], capturedAt: new Date().toISOString() }) }); data.engineVersion = ENGINE_VERSION; await chrome.storage.local.set({ latestGenerated: data }); return data; }
+async function generate(project) { const s = await settings(); const data = await panelRequest("/api/generate", { method: "POST", body: JSON.stringify({ ...project, freelancerProfile: s.freelancerProfile || "", preferredDomains: s.preferredDomains || [], capturedAt: new Date().toISOString() }) }); if (self.CopilotGuard.unsafeBid(data.bid)) throw new Error("خروجی مدل قابل نمایش نیست؛ دوباره تلاش کن."); data.engineVersion = ENGINE_VERSION; await chrome.storage.local.set({ latestGenerated: data }); return data; }
 async function markStatus(url, status) { try { await panelRequest("/api/projects", { method: "PATCH", body: JSON.stringify({ url, status }) }); } catch {} }
 
 function keyFor(url = "") { try { const u = new URL(url); u.hash = ""; for (const key of [...u.searchParams.keys()]) if (/^(utm_.+|ref|source|from|campaign|tracking|fbclid|gclid)$/i.test(key)) u.searchParams.delete(key); u.pathname = u.pathname.replace(/\/+$/, "") || "/"; return u.toString(); } catch { return String(url || "").trim(); } }

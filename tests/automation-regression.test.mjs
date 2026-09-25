@@ -251,11 +251,9 @@ test("hosted database uses a private RLS-enabled Supabase schema", () => {
 
 test("proposal strategy rejects repetitive AI-template sections", () => {
   const bid = read("panel/lib/bid.ts");
-  assert.match(bid, /Tools & Software Stack/);
-  assert.match(bid, /Asset Libraries/);
-  assert.match(bid, /Project Roadmap/);
-  assert.match(bid, /Reassuring Facts/);
-  assert.match(bid, /2-4 natural paragraphs/);
+  assert.match(bid, /Avoid generic sales claims, headings, metadata/);
+  assert.match(bid, /Return exactly one JSON object/);
+  assert.doesNotMatch(bid, /labelledProposal|jsonCandidates/);
   assert.match(bid, /enforceProposalStyle/);
   assert.match(bid, /max_output_tokens: 650/);
 });
