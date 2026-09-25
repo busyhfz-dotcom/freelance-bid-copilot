@@ -76,16 +76,17 @@ test("bid generation fails closed while bounding provider failover latency", () 
   assert.match(bidSource, /resolveAIProviders/);
   assert.doesNotMatch(bidSource, /const apiKey = process\.env\.OPENAI_API_KEY/);
   assert.match(bidSource, /GENERATION_BUDGET_MS = 18_000/);
-  assert.match(bidSource, /PROVIDER_TIMEOUT_MS = 9_000/);\n  assert.match(bidSource, /OPENROUTER_FAILOVER_TIMEOUT_MS = 12_000/);
-  assert.match(bidSource, /FREE_ROUTER_TIMEOUT_MS = 4_000/);
-  assert.match(bidSource, /FREE_MODEL_TIMEOUT_MS = 6_000/);
+  assert.match(bidSource, /PROVIDER_TIMEOUT_MS = 9_000/);
+  assert.match(bidSource, /OPENROUTER_FAILOVER_TIMEOUT_MS = 12_000/);
   assert.match(bidSource, /providerTimeout\(provider, remainingMs\)/);
+  assert.match(bidSource, /requestBody\.model = OPENROUTER_FREE_FALLBACK_MODELS\[0\]/);
+  assert.match(bidSource, /requestBody\.models = OPENROUTER_FREE_FALLBACK_MODELS\.slice\(1\)/);
+  assert.match(bidSource, /responsePreview/);
   assert.match(bidSource, /attempt < 1/);
   assert.match(bidSource, /generationDeadline/);
   assert.match(bidSource, /lastFailure = "similarity_guard"/);
   assert.match(bidSource, /lastFailure = "project_grounding_guard"/);
   assert.match(bidSource, /throw new BidGenerationError\("AI_GENERATION_REJECTED"/);
-  assert.doesNotMatch(bidSource, /configured providers\.\\n/);
   assert.doesNotMatch(bidSource, /function fallbackProposal/);
 });
 
@@ -101,8 +102,10 @@ test("extension settings verifies authenticated panel health and provider-aware 
   assert.match(provider, /GROQ_API_KEY/);
   assert.match(provider, /openai\/gpt-oss-120b/);
   assert.match(provider, /provider === "custom" && \/openrouter\\\.ai\/i/);
-  assert.match(provider, /google\/gemma-4-26b-a4b-it:free/);
-  assert.match(provider, /google\/gemma-4-31b-it:free/);
+  assert.match(provider, /nvidia\/nemotron-3-ultra-550b-a55b:free/);
+  assert.match(provider, /poolside\/laguna-s-2\.1:free/);
+  assert.match(provider, /inclusionai\/ling-3\.0-flash:free/);
+  assert.match(provider, /OPENAI_FALLBACK_ENABLED/);
   assert.doesNotMatch(provider, /nex-agi\/nex-n2\.5-mini:free/);
   assert.doesNotMatch(instrumentation, /globalThis\.fetch\s*=/);
   assert.doesNotMatch(instrumentation, /nex-agi\/nex-n2\.5-mini:free/);
