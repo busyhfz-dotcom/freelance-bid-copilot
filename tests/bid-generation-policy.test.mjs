@@ -77,6 +77,8 @@ test("bid generation fails closed while bounding provider failover latency", () 
   assert.doesNotMatch(bidSource, /const apiKey = process\.env\.OPENAI_API_KEY/);
   assert.match(bidSource, /GENERATION_BUDGET_MS = 18_000/);
   assert.match(bidSource, /PROVIDER_TIMEOUT_MS = 9_000/);
+  assert.match(bidSource, /FREE_ROUTER_TIMEOUT_MS = 5_000/);
+  assert.match(bidSource, /providerTimeout\(provider, remainingMs\)/);
   assert.match(bidSource, /attempt < 1/);
   assert.match(bidSource, /generationDeadline/);
   assert.match(bidSource, /lastFailure = "similarity_guard"/);
@@ -97,5 +99,7 @@ test("extension settings verifies authenticated panel health and provider-aware 
   assert.match(health, /resolveAIProvider/);
   assert.match(provider, /GROQ_API_KEY/);
   assert.match(provider, /openai\/gpt-oss-120b/);
-  assert.match(instrumentation, /api\.groq|provider\.endpoint|OPENAI_RESPONSES_URL/);
+  assert.match(provider, /provider === "custom" && \/openrouter\\\.ai\/i/);
+  assert.doesNotMatch(instrumentation, /globalThis\.fetch\s*=/);
+  assert.doesNotMatch(instrumentation, /nex-agi\/nex-n2\.5-mini:free/);
 });
