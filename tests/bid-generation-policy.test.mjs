@@ -71,14 +71,18 @@ test("generic fallback phrases are rejected instead of being submitted", () => {
   assert.equal(enforceProposalStyle("به‌نظرم نقطه حساس این پروژه این است که نسخه اولیه را زود روی میز بگذاریم."), "");
 });
 
-test("bid generation fails closed and retries rejected model output", () => {
+test("bid generation fails closed while bounding provider failover latency", () => {
   assert.match(bidSource, /AI_NOT_CONFIGURED/);
-  assert.match(bidSource, /resolveAIProvider/);
+  assert.match(bidSource, /resolveAIProviders/);
   assert.doesNotMatch(bidSource, /const apiKey = process\.env\.OPENAI_API_KEY/);
-  assert.match(bidSource, /attempt < 3/);
+  assert.match(bidSource, /GENERATION_BUDGET_MS = 18_000/);
+  assert.match(bidSource, /PROVIDER_TIMEOUT_MS = 9_000/);
+  assert.match(bidSource, /attempt < 1/);
+  assert.match(bidSource, /generationDeadline/);
   assert.match(bidSource, /lastFailure = "similarity_guard"/);
   assert.match(bidSource, /lastFailure = "project_grounding_guard"/);
   assert.match(bidSource, /throw new BidGenerationError\("AI_GENERATION_REJECTED"/);
+  assert.doesNotMatch(bidSource, /configured providers\.\\n/);
   assert.doesNotMatch(bidSource, /function fallbackProposal/);
 });
 
