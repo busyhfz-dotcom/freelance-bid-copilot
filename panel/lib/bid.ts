@@ -273,16 +273,90 @@ function extractResponseText(data: any): string {
   return chunks.join("\n").trim();
 }
 
-function parseAI(text: string) {
-  const trimmed = text.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
-  try { return JSON.parse(trimmed); } catch { return null; }
+type ParsedAI = { proposal: string; durationDays?: string | number };
+
+function normalizedAIObject(value: any): ParsedAI | null {
+  if (!value || typeof value !== "object") return null;
+  const candidate = value.result && typeof value.result === "object"
+    ? value.result
+    : value.response && typeof value.response === "object"
+      ? value.response
+      : value;
+  const proposal = candidate.proposal ?? candidate.proposalText ?? candidate.proposal_text ?? candidate.bid ?? candidate.text;
+  const durationDays = candidate.durationDays ?? candidate.duration_days ?? candidate.duration ?? candidate.days;
+  if (typeof proposal !== "string" || !proposal.trim()) return null;
+  return { proposal: proposal.trim(), durationDays };
+}
+
+function jsonCandidates(text: string) {
+  const candidates = new Set<string>();
+  const cleaned = text
+    .replace(/<think>[\s\S]*?<\/think>/gi, "")
+    .replace(/<reasoning>[\s\S]*?<\/reasoning>/gi, "")
+    .trim();
+  if (cleaned) candidates.add(cleaned);
+
+  for (const match of cleaned.matchAll(/\`\`\`(?:json)?\s*([\s\S]*?)\s*\`\`\`/gi)) {
+    if (match[1]?.trim()) candidates.add(match[1].trim());
+  }
+
+  const firstBrace = cleaned.indexOf("{");
+  const lastBrace = cleaned.lastIndexOf("}");
+  if (firstBrace >= 0 && lastBrace > firstBrace) candidates.add(cleaned.slice(firstBrace, lastBrace + 1));
+  return [...candidates];
+}
+
+export function parseAI(text: string): ParsedAI | null {
+  for (const candidate of jsonCandidates(text)) {
+    for (const variant of [candidate, candidate.replace(/,\s*([}\]])/g, "$1")]) {
+      try {
+        const normalized = normalizedAIObject(JSON.parse(variant));
+        if (normalized) return normalized;
+      } catch {
+        // Try the next tolerant representation.
+      }
+    }
+  }
+
+  const cleaned = text
+    .replace(/<think>[\s\S]*?<\/think>/gi, "")
+    .replace(/<reasoning>[\s\S]*?<\/reasoning>/gi, "")
+    .replace(/^\s*\`\`\`(?:json|text)?/i, "")
+    .replace(/\`\`\`\s*$/i, "")
+    .trim();
+
+  const labelledProposal = cleaned.match(
+    /(?:^|\n)\s*(?:proposal|proposal_text|bid|پیشنهاد)\s*[:：-]\s*([\s\S]*?)(?=\n\s*(?:durationDays|duration_days|duration|days|مدت)\s*[:：-]|$)/i
+  );
+  const durationMatch = cleaned.match(/(?:durationDays|duration_days|duration|days|مدت)\s*[:：-]\s*["']?(\d{1,2})/i);
+  if (labelledProposal?.[1]?.trim()) {
+    return { proposal: labelledProposal[1].trim().replace(/^["']|["'],?$/g, ""), durationDays: durationMatch?.[1] };
+  }
+
+  if (
+    cleaned.length >= 80 &&
+    cleaned.length <= 2200 &&
+    !/^\s*(?:analysis|reasoning|thought process)\s*[:：]/i.test(cleaned) &&
+    !/^\s*[\[{]/.test(cleaned)
+  ) {
+    return { proposal: cleaned, durationDays: durationMatch?.[1] };
+  }
+
+  return null;
 }
 
 function chatCompletionText(data: any): string {
-  const content = data?.choices?.[0]?.message?.content;
+  const message = data?.choices?.[0]?.message;
+  const content = message?.content;
   if (typeof content === "string") return content.trim();
-  if (content && typeof content === "object" && !Array.isArray(content)) return JSON.stringify(content);
-  if (Array.isArray(content)) return content.map((part: any) => part?.text || part?.content || "").filter(Boolean).join("\n").trim();
+  if (content && typeof content === "object" && !Array.isArray(content)) {
+    if (typeof content.text === "string") return content.text.trim();
+    if (typeof content.content === "string") return content.content.trim();
+    return JSON.stringify(content);
+  }
+  if (Array.isArray(content)) {
+    return content.map((part: any) => part?.text || part?.content || part?.value || "").filter(Boolean).join("\n").trim();
+  }
   return "";
 }
 
@@ -313,13 +387,19 @@ async function callAIProvider(provider: AIProviderConfig, input: any[], signal: 
   };
 
   if (provider.provider === "openrouter") {
-    requestBody.models = provider.model === "openrouter/free"
-      ? OPENROUTER_FREE_FALLBACK_MODELS
-      : [provider.model, ...OPENROUTER_FREE_FALLBACK_MODELS.filter((model) => model !== provider.model)];
+    if (provider.model === "openrouter/free") {
+      requestBody.model = OPENROUTER_FREE_FALLBACK_MODELS[0];
+      requestBody.models = OPENROUTER_FREE_FALLBACK_MODELS.slice(1);
+    } else {
+      requestBody.model = provider.model;
+      requestBody.models = OPENROUTER_FREE_FALLBACK_MODELS
+        .filter((model) => model !== provider.model)
+        .slice(0, 2);
+    }
     requestBody.provider = { allow_fallbacks: true };
-    // Do not require response_format here: several of the healthiest current free
-    // endpoints do not support it. The system prompt still requires JSON and parseAI
-    // validates the returned payload before a bid can be accepted.
+    // Do not require response_format here: several healthy free endpoints do not
+    // support it. parseAI is tolerant about representation while the downstream
+    // grounding/quality/language/similarity guards remain strict.
   } else {
     requestBody.response_format = { type: "json_object" };
   }
@@ -453,8 +533,20 @@ export async function generateBid(project: ProjectPayload, previousBids: BidMemo
           continue;
         }
 
-        const parsed = parseAI(await readText());
-        if (!parsed?.proposal || typeof parsed.proposal !== "string") { lastFailure = `${provider.provider}_invalid_response`; continue; }
+        const rawText = await readText();
+        const parsed = parseAI(rawText);
+        if (!parsed?.proposal || typeof parsed.proposal !== "string") {
+          lastFailure = `${provider.provider}_invalid_response`;
+          console.warn("[bid-provider]", {
+            provider: provider.provider,
+            model: provider.model,
+            outcome: lastFailure,
+            durationMs: Date.now() - providerStartedAt,
+            responseChars: rawText.length,
+            responsePreview: rawText.slice(0, 160).replace(/\s+/g, " ")
+          });
+          continue;
+        }
         const aiDuration = /^\d{1,2}$/.test(String(parsed.durationDays || "")) ? String(parsed.durationDays) : duration;
         const proposal = enforceProposalStyle(parsed.proposal, complex ? 1400 : 900);
         if (!proposal) { lastFailure = "generic_or_empty"; continue; }
