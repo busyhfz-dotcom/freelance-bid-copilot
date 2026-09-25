@@ -69,9 +69,20 @@ Proposal rules:
 Return JSON only with keys: proposal, durationDays.
 - durationDays: integer string such as "4".`;
 
-const GENERATION_BUDGET_MS = 18_000;
+const GENERATION_BUDGET_MS = 15_000;
 const PROVIDER_TIMEOUT_MS = 9_000;
-const OPENROUTER_FAILOVER_TIMEOUT_MS = 12_000;
+const OPENROUTER_FAILOVER_TIMEOUT_MS = 10_000;
+
+const FAST_OPENROUTER_SYSTEM = `Write one concise, human, project-specific freelance proposal.
+Rules:
+- Read the actual title/brief and mention concrete requested work, not generic enthusiasm.
+- Never invent experience, portfolio, credentials, guarantees, or facts not provided.
+- No headings, boilerplate sections, marketplace metadata, budget repetition, URLs, or canned closing.
+- Match the client's language; Kaya must always be professional English.
+- Use 2-3 short natural paragraphs. Ask at most one question only when it changes scope.
+- Include one practical execution idea tied to the brief.
+- Keep the proposal specific enough that the client can see the brief was understood.
+Return JSON with keys proposal and durationDays. If JSON formatting is imperfect, still put only the proposal and duration in the answer.`;
 
 function providerTimeout(provider: AIProviderConfig, remainingMs: number) {
   if (provider.provider === "openrouter") {
@@ -383,7 +394,7 @@ async function callAIProvider(provider: AIProviderConfig, input: any[], signal: 
   const requestBody: Record<string, unknown> = {
     model: provider.model,
     messages,
-    max_tokens: 650
+    max_tokens: provider.provider === "openrouter" ? 420 : 650
   };
 
   if (provider.provider === "openrouter") {
@@ -396,7 +407,7 @@ async function callAIProvider(provider: AIProviderConfig, input: any[], signal: 
         .filter((model) => model !== provider.model)
         .slice(0, 2);
     }
-    requestBody.provider = { allow_fallbacks: true };
+    requestBody.provider = { allow_fallbacks: true, sort: "latency" };
     // Do not require response_format here: several healthy free endpoints do not
     // support it. parseAI is tolerant about representation while the downstream
     // grounding/quality/language/similarity guards remain strict.
@@ -498,25 +509,34 @@ export async function generateBid(project: ProjectPayload, previousBids: BidMemo
       const providerTimeoutMs = providerTimeout(provider, remainingMs);
       const timer = setTimeout(() => controller.abort(), providerTimeoutMs);
       try {
+        const fastOpenRouter = provider.provider === "openrouter";
         const input = [
-          { role: "system", content: [{ type: "input_text", text: SYSTEM }] },
+          { role: "system", content: [{ type: "input_text", text: fastOpenRouter ? FAST_OPENROUTER_SYSTEM : SYSTEM }] },
           { role: "user", content: [{ type: "input_text", text: JSON.stringify({
             marketplace: project.site,
             requiredProposalLanguage: kaya ? "English" : "Match the client brief language",
-            languageInstruction: kaya ? "Write the entire client-facing proposal in fluent professional English. Never switch to Persian because of UI text or metadata." : "Match the language actually used by the client.",
+            languageInstruction: kaya ? "Write the entire client-facing proposal in fluent professional English." : "Match the language actually used by the client.",
             title: clean(project.title),
-            brief: cleanedBrief || "The client provided almost no detail beyond the project title.",
-            skills: project.skills || [],
-            freelancerProfile: clean(project.freelancerProfile || "").slice(0, 2500),
+            brief: (cleanedBrief || "The client provided almost no detail beyond the project title.").slice(0, fastOpenRouter ? 3200 : 7000),
+            skills: (project.skills || []).slice(0, fastOpenRouter ? 10 : 30),
+            freelancerProfile: clean(project.freelancerProfile || "").slice(0, fastOpenRouter ? 900 : 2500),
             locallyRecommendedDurationDays: duration,
-            expectedDepth: complex ? "Explain relevant execution details in 3-4 substantive natural paragraphs." : "Use 2-3 concise useful paragraphs; stay specific rather than padding.",
+            expectedDepth: fastOpenRouter
+              ? "Write 2-3 concise, specific paragraphs."
+              : complex ? "Explain relevant execution details in 3-4 substantive natural paragraphs." : "Use 2-3 concise useful paragraphs; stay specific rather than padding.",
             generationNonce: generationNonce(project, attempt),
-            projectFingerprint: fingerprint,
-            fingerprintInstruction: fingerprintInstruction(fingerprint),
+            projectFingerprint: fastOpenRouter ? {
+              deliverable: fingerprint.deliverable,
+              constraints: fingerprint.constraints.slice(0, 5),
+              uniqueSignals: fingerprint.uniqueSignals.slice(0, 6)
+            } : fingerprint,
+            fingerprintInstruction: fastOpenRouter ? "" : fingerprintInstruction(fingerprint),
             originalityReminder: uniqueInstruction,
-            priorBidPatternsToAvoid: priorPatternSamples,
-            regenerationInstruction: attempt > 0 ? "The previous draft was rejected. Re-read the brief and rebuild the reasoning from scratch." : "",
-            humanReviewStandard: "Show real comprehension, name relevant requested features, explain implementation impact plainly, and be candid about scope."
+            priorBidPatternsToAvoid: priorPatternSamples.slice(0, fastOpenRouter ? 2 : 4),
+            regenerationInstruction: attempt > 0 ? "The previous draft was rejected. Rebuild it from the brief." : "",
+            humanReviewStandard: fastOpenRouter
+              ? "Be concrete, truthful and useful."
+              : "Show real comprehension, name relevant requested features, explain implementation impact plainly, and be candid about scope."
           }) }] }
         ];
 
