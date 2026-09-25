@@ -4,6 +4,8 @@ export type AIProviderConfig = {
   provider: AIProviderName;
   apiKey: string;
   model: string;
+  fallbackModels?: string[];
+  pool?: string;
   baseUrl: string;
   endpoint: string;
   configured: boolean;
@@ -14,11 +16,23 @@ const GROQ_BASE_URL = "https://api.groq.com/openai/v1";
 const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 const GROQ_DEFAULT_MODEL = "openai/gpt-oss-120b";
 const OPENROUTER_DEFAULT_MODEL = "openrouter/free";
-export const OPENROUTER_FREE_FALLBACK_MODELS = [
-  "inclusionai/ling-3.0-flash:free",
-  "inclusionai/ling-3.0-flash-vl:free",
-  "poolside/laguna-s-2.1:free"
-];
+export const OPENROUTER_FREE_MODEL_POOLS = [
+  [
+    "inclusionai/ling-3.0-flash:free",
+    "nvidia/nemotron-3.5-lightning:free",
+    "dots-studio/dots-3-note-preview:free"
+  ],
+  [
+    "poolside/laguna-s-2.1:free",
+    "google/gemma-4-26b-a4b-it:free",
+    "google/gemma-4-31b-it:free"
+  ],
+  [
+    "nvidia/nemotron-3-ultra-550b-a55b:free",
+    "inclusionai/ling-3.0-flash-fin:free",
+    "inclusionai/ling-3.0-flash-vl:free"
+  ]
+] as const;
 
 function env(name: string) {
   return process.env[name]?.trim() || "";
@@ -111,10 +125,23 @@ export function resolveAIProviders(): AIProviderConfig[] {
   for (const name of order) {
     const config = configFor(name);
     if (!config.configured) continue;
-    const key = `${config.provider}|${config.baseUrl}|${config.model}|${config.apiKey.slice(0, 8)}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    providers.push(config);
+
+    const candidates: AIProviderConfig[] =
+      config.provider === "openrouter" && config.model === OPENROUTER_DEFAULT_MODEL
+        ? OPENROUTER_FREE_MODEL_POOLS.map((pool, index) => ({
+            ...config,
+            model: pool[0],
+            fallbackModels: [...pool.slice(1)],
+            pool: `free-${index + 1}`
+          }))
+        : [config];
+
+    for (const candidate of candidates) {
+      const key = `${candidate.provider}|${candidate.baseUrl}|${candidate.model}|${candidate.apiKey.slice(0, 8)}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      providers.push(candidate);
+    }
   }
   return providers;
 }

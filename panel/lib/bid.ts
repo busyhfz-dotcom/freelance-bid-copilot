@@ -1,5 +1,5 @@
 import type { BidDecision, CompetitionLevel, ProjectPayload } from "./types";
-import { OPENROUTER_FREE_FALLBACK_MODELS, resolveAIProviders, type AIProviderConfig } from "./ai-provider";
+import { resolveAIProviders, type AIProviderConfig } from "./ai-provider";
 import { localDomainMatch, type DomainGate } from "./domain";
 import { decisionFor } from "./bid-policy";
 import { enforceProposalStyle, normalizeDigits, parseBudget, recommendedPriceForBudget } from "./bid-utils";
@@ -71,7 +71,7 @@ Return JSON only with keys: proposal, durationDays.
 
 const GENERATION_BUDGET_MS = 15_000;
 const PROVIDER_TIMEOUT_MS = 9_000;
-const OPENROUTER_FAILOVER_TIMEOUT_MS = 10_000;
+const OPENROUTER_FAILOVER_TIMEOUT_MS = 5_000;
 
 const FAST_OPENROUTER_SYSTEM = `Write one concise, human, project-specific freelance proposal.
 Rules:
@@ -398,15 +398,8 @@ async function callAIProvider(provider: AIProviderConfig, input: any[], signal: 
   };
 
   if (provider.provider === "openrouter") {
-    if (provider.model === "openrouter/free") {
-      requestBody.model = OPENROUTER_FREE_FALLBACK_MODELS[0];
-      requestBody.models = OPENROUTER_FREE_FALLBACK_MODELS.slice(1);
-    } else {
-      requestBody.model = provider.model;
-      requestBody.models = OPENROUTER_FREE_FALLBACK_MODELS
-        .filter((model) => model !== provider.model)
-        .slice(0, 2);
-    }
+    requestBody.model = provider.model;
+    if (provider.fallbackModels?.length) requestBody.models = provider.fallbackModels.slice(0, 2);
     requestBody.provider = { allow_fallbacks: true, sort: "latency" };
     // Do not require response_format here: several healthy free endpoints do not
     // support it. parseAI is tolerant about representation while the downstream
@@ -546,6 +539,7 @@ export async function generateBid(project: ProjectPayload, previousBids: BidMemo
           console.warn("[bid-provider]", {
             provider: provider.provider,
             model: provider.model,
+            pool: provider.pool || "",
             outcome: lastFailure,
             durationMs: Date.now() - providerStartedAt,
             upstreamError: await providerErrorSummary(response)
@@ -581,6 +575,7 @@ export async function generateBid(project: ProjectPayload, previousBids: BidMemo
         console.info("[bid-provider]", {
           provider: provider.provider,
           model: provider.model,
+          pool: provider.pool || "",
           outcome: "accepted",
           durationMs: Date.now() - providerStartedAt
         });
@@ -590,6 +585,7 @@ export async function generateBid(project: ProjectPayload, previousBids: BidMemo
         console.warn("[bid-provider]", {
           provider: provider.provider,
           model: provider.model,
+          pool: provider.pool || "",
           outcome: lastFailure,
           durationMs: Date.now() - providerStartedAt
         });
