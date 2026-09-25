@@ -69,20 +69,27 @@ Proposal rules:
 Return JSON only with keys: proposal, durationDays.
 - durationDays: integer string such as "4".`;
 
-const GENERATION_BUDGET_MS = 15_000;
+const GENERATION_BUDGET_MS = 22_000;
 const PROVIDER_TIMEOUT_MS = 9_000;
-const OPENROUTER_FAILOVER_TIMEOUT_MS = 5_000;
+const OPENROUTER_FAILOVER_TIMEOUT_MS = 7_000;
 
-const FAST_OPENROUTER_SYSTEM = `Write one concise, human, project-specific freelance proposal.
+const QUALITY_OPENROUTER_SYSTEM = `Write a strong freelance bid that makes it obvious you understood this exact project.
+The proposal must earn the client's attention through specificity, not sales language.
+
 Rules:
-- Read the actual title/brief and mention concrete requested work, not generic enthusiasm.
-- Never invent experience, portfolio, credentials, guarantees, or facts not provided.
-- No headings, boilerplate sections, marketplace metadata, budget repetition, URLs, or canned closing.
-- Match the client's language; Kaya must always be professional English.
-- Use 2-3 short natural paragraphs. Ask at most one question only when it changes scope.
-- Include one practical execution idea tied to the brief.
-- Keep the proposal specific enough that the client can see the brief was understood.
-Return JSON with keys proposal and durationDays. If JSON formatting is imperfect, still put only the proposal and duration in the answer.`;
+- Base every claim on the supplied title, brief, skills, constraints or freelancer profile.
+- Open with a concrete project detail, dependency, deliverable or implementation decision.
+- Mention at least 2 distinct project-specific details when the brief contains them.
+- Explain one practical execution decision and why it matters for this project.
+- Do not merely repeat the brief; connect requirements to how the work will be handled.
+- Never invent experience, portfolio items, credentials, guarantees, team size or facts not provided.
+- Avoid generic filler such as "I can do this", "I am ready", "high quality", "best result", "according to your needs", or their Persian equivalents.
+- No headings, bullet lists, boilerplate sections, marketplace metadata, budget repetition, URLs or canned closing.
+- Match the client's language. Kaya must always be natural professional English.
+- Prefer 2-4 natural paragraphs. Keep simple jobs concise; give technically coupled jobs enough detail to prove understanding.
+- Ask at most one question and only if the answer changes scope or acceptance criteria.
+- End naturally; do not force a call-to-action or promise unrealistic speed.
+Return JSON with keys proposal and durationDays.`;
 
 function providerTimeout(provider: AIProviderConfig, remainingMs: number) {
   if (provider.provider === "openrouter") {
@@ -265,6 +272,47 @@ function proposalGroundingScore(proposal: string, fingerprint: ReturnType<typeof
   return { matched, score: evidence.length ? matched.length / Math.min(12, new Set(evidence).size) : 0 };
 }
 
+const GENERIC_BID_PATTERNS = [
+  /(?:با کیفیت|بهترین کیفیت|رضایت شما|طبق نیاز شما|در اسرع وقت|در کوتاه.?ترین زمان)/i,
+  /(?:انجام این پروژه|آماده انجام|می.?تونم انجام|می.?توانم انجام|خوشحال می.?شوم)/i,
+  /(?:i can do (?:this|the project)|i am ready|high quality|best result|according to your needs|happy to help)/i,
+  /(?:با دقت کامل|کاملاً حرفه.?ای|به بهترین شکل|بدون مشکل انجام)/i
+];
+
+function proposalQualityAssessment(
+  proposal: string,
+  fingerprint: ReturnType<typeof createProjectFingerprint>,
+  cleanedBrief: string,
+  complex: boolean
+) {
+  const grounding = proposalGroundingScore(proposal, fingerprint);
+  const reasons: string[] = [];
+  const minimumSignals = complex ? 5 : cleanedBrief.length >= 220 ? 3 : cleanedBrief.length >= 80 ? 2 : 1;
+  const firstChunkTokens = new Set(specificityTokens(proposal.slice(0, 260)));
+  const groundedEarly = grounding.matched.some((token) => firstChunkTokens.has(token));
+  const hasExecutionDecision =
+    /(?:پیاده.?سازی|اتصال|یکپارچه|بررسی|تحلیل|اصلاح|ساخت|طراحی|تنظیم|تست|بهینه|مهاجرت|بازنویسی|اعتبارسنجی|مدیریت|implement|integrat|inspect|debug|refactor|validat|configur|test|optim|migrat|design|build)/i.test(proposal);
+  const genericHits = GENERIC_BID_PATTERNS.filter((pattern) => pattern.test(proposal)).length;
+  const minimumLength = complex ? 260 : cleanedBrief.length >= 120 ? 150 : 90;
+
+  if (grounding.matched.length < minimumSignals) reasons.push("insufficient_project_details");
+  if (cleanedBrief.length >= 100 && !groundedEarly) reasons.push("generic_opening");
+  if (!hasExecutionDecision) reasons.push("no_execution_decision");
+  if (genericHits >= 2) reasons.push("generic_sales_language");
+  if (proposal.trim().length < minimumLength) reasons.push("too_shallow");
+
+  return { ok: reasons.length === 0, reasons, grounding };
+}
+
+const QUALITY_RETRY_FAILURES = new Set([
+  "generic_or_empty",
+  "project_grounding_guard",
+  "quality_guard",
+  "semantic_quality_guard",
+  "similarity_guard",
+  "kaya_non_english"
+]);
+
 function generationNonce(project: ProjectPayload, attempt = 0) {
   const seed = `${project.url || project.title}:${Date.now()}:${Math.random()}`;
   let hash = 2166136261;
@@ -394,7 +442,7 @@ async function callAIProvider(provider: AIProviderConfig, input: any[], signal: 
   const requestBody: Record<string, unknown> = {
     model: provider.model,
     messages,
-    max_tokens: provider.provider === "openrouter" ? 420 : 650
+    max_tokens: provider.provider === "openrouter" ? 700 : 650
   };
 
   if (provider.provider === "openrouter") {
@@ -487,10 +535,15 @@ export async function generateBid(project: ProjectPayload, previousBids: BidMemo
   const kaya = String(project.site || "").toLowerCase() === "kaya";
   let lastFailure = "invalid_response";
 
-  // Keep interactive generation responsive: one pass across configured providers.
-  // A rejected or rate-limited provider immediately falls through to the next provider.
+  // Prefer a strong first draft. If a model returns a usable but shallow draft, allow
+  // one targeted regeneration; transport/rate-limit failures do not trigger retries.
   const generationDeadline = Date.now() + GENERATION_BUDGET_MS;
-  for (let attempt = 0; attempt < 1; attempt += 1) {
+  let qualityRetryNeeded = false;
+  let rejectedDraft = "";
+  let rejectedReasons: string[] = [];
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    if (attempt > 0 && !qualityRetryNeeded) break;
+    qualityRetryNeeded = false;
     for (const provider of providers) {
       const remainingMs = generationDeadline - Date.now();
       if (remainingMs < 1_200) {
@@ -502,34 +555,31 @@ export async function generateBid(project: ProjectPayload, previousBids: BidMemo
       const providerTimeoutMs = providerTimeout(provider, remainingMs);
       const timer = setTimeout(() => controller.abort(), providerTimeoutMs);
       try {
-        const fastOpenRouter = provider.provider === "openrouter";
+        const openRouter = provider.provider === "openrouter";
+        const systemPrompt = openRouter && !complex && attempt === 0 ? QUALITY_OPENROUTER_SYSTEM : SYSTEM;
         const input = [
-          { role: "system", content: [{ type: "input_text", text: fastOpenRouter ? FAST_OPENROUTER_SYSTEM : SYSTEM }] },
+          { role: "system", content: [{ type: "input_text", text: systemPrompt }] },
           { role: "user", content: [{ type: "input_text", text: JSON.stringify({
             marketplace: project.site,
             requiredProposalLanguage: kaya ? "English" : "Match the client brief language",
             languageInstruction: kaya ? "Write the entire client-facing proposal in fluent professional English." : "Match the language actually used by the client.",
             title: clean(project.title),
-            brief: (cleanedBrief || "The client provided almost no detail beyond the project title.").slice(0, fastOpenRouter ? 3200 : 7000),
-            skills: (project.skills || []).slice(0, fastOpenRouter ? 10 : 30),
-            freelancerProfile: clean(project.freelancerProfile || "").slice(0, fastOpenRouter ? 900 : 2500),
+            brief: (cleanedBrief || "The client provided almost no detail beyond the project title.").slice(0, openRouter ? 5200 : 7000),
+            skills: (project.skills || []).slice(0, openRouter ? 16 : 30),
+            freelancerProfile: clean(project.freelancerProfile || "").slice(0, openRouter ? 1600 : 2500),
             locallyRecommendedDurationDays: duration,
-            expectedDepth: fastOpenRouter
-              ? "Write 2-3 concise, specific paragraphs."
-              : complex ? "Explain relevant execution details in 3-4 substantive natural paragraphs." : "Use 2-3 concise useful paragraphs; stay specific rather than padding.",
+            expectedDepth: complex
+              ? "Use 3-4 substantive natural paragraphs and connect multiple requirements to implementation decisions."
+              : "Use 2-3 concise but specific paragraphs. Every paragraph must add project-specific value.",
             generationNonce: generationNonce(project, attempt),
-            projectFingerprint: fastOpenRouter ? {
-              deliverable: fingerprint.deliverable,
-              constraints: fingerprint.constraints.slice(0, 5),
-              uniqueSignals: fingerprint.uniqueSignals.slice(0, 6)
-            } : fingerprint,
-            fingerprintInstruction: fastOpenRouter ? "" : fingerprintInstruction(fingerprint),
+            projectFingerprint: fingerprint,
+            fingerprintInstruction: fingerprintInstruction(fingerprint),
             originalityReminder: uniqueInstruction,
-            priorBidPatternsToAvoid: priorPatternSamples.slice(0, fastOpenRouter ? 2 : 4),
-            regenerationInstruction: attempt > 0 ? "The previous draft was rejected. Rebuild it from the brief." : "",
-            humanReviewStandard: fastOpenRouter
-              ? "Be concrete, truthful and useful."
-              : "Show real comprehension, name relevant requested features, explain implementation impact plainly, and be candid about scope."
+            priorBidPatternsToAvoid: priorPatternSamples,
+            regenerationInstruction: attempt > 0
+              ? `The previous draft was rejected for: ${rejectedReasons.join(", ") || lastFailure}. Rewrite from scratch. Do not paraphrase the rejected draft. Rejected draft: ${rejectedDraft.slice(0, 700)}`
+              : "",
+            humanReviewStandard: "The bid should sound like a capable freelancer who understood the brief, not a generic AI proposal. Specificity and useful judgment matter more than enthusiasm."
           }) }] }
         ];
 
@@ -562,16 +612,53 @@ export async function generateBid(project: ProjectPayload, previousBids: BidMemo
           continue;
         }
         const aiDuration = /^\d{1,2}$/.test(String(parsed.durationDays || "")) ? String(parsed.durationDays) : duration;
-        const proposal = enforceProposalStyle(parsed.proposal, complex ? 1400 : 900);
-        if (!proposal) { lastFailure = "generic_or_empty"; continue; }
-        if (kaya && /[\u0600-\u06ff]/.test(proposal)) { lastFailure = "kaya_non_english"; continue; }
+        const proposal = enforceProposalStyle(parsed.proposal, complex ? 1500 : 1050);
+        if (!proposal) {
+          lastFailure = "generic_or_empty";
+          qualityRetryNeeded = true;
+          rejectedDraft = String(parsed.proposal || "");
+          rejectedReasons = [lastFailure];
+          continue;
+        }
+        if (kaya && /[\u0600-\u06ff]/.test(proposal)) {
+          lastFailure = "kaya_non_english";
+          qualityRetryNeeded = true;
+          rejectedDraft = proposal;
+          rejectedReasons = [lastFailure];
+          continue;
+        }
 
-        const grounding = proposalGroundingScore(proposal, fingerprint);
-        const minimumSignals = complex ? 4 : cleanedBrief.length >= 180 ? 3 : 1;
-        if (grounding.matched.length < minimumSignals) { lastFailure = "project_grounding_guard"; continue; }
+        const semantic = proposalQualityAssessment(proposal, fingerprint, cleanedBrief, complex);
+        if (!semantic.ok) {
+          lastFailure = "semantic_quality_guard";
+          qualityRetryNeeded = true;
+          rejectedDraft = proposal;
+          rejectedReasons = semantic.reasons;
+          console.warn("[bid-quality]", {
+            site: project.site,
+            model: provider.model,
+            pool: provider.pool || "",
+            reasons: semantic.reasons,
+            matchedSignals: semantic.grounding.matched.length
+          });
+          continue;
+        }
+
         const scored = scoreResult(project, proposal, cleanedBrief, price, aiDuration);
-        if (scored.bidQualityScore < 70) { lastFailure = "quality_guard"; continue; }
-        if (shouldRegenerateBid(proposal, previousBids, 0.62, project.title)) { lastFailure = "similarity_guard"; continue; }
+        if (scored.bidQualityScore < 78) {
+          lastFailure = "quality_guard";
+          qualityRetryNeeded = true;
+          rejectedDraft = proposal;
+          rejectedReasons = [`quality_score_${scored.bidQualityScore}`];
+          continue;
+        }
+        if (shouldRegenerateBid(proposal, previousBids, 0.58, project.title)) {
+          lastFailure = "similarity_guard";
+          qualityRetryNeeded = true;
+          rejectedDraft = proposal;
+          rejectedReasons = [lastFailure];
+          continue;
+        }
         console.info("[bid-provider]", {
           provider: provider.provider,
           model: provider.model,

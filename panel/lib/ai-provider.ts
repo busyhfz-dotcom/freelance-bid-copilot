@@ -18,18 +18,18 @@ const GROQ_DEFAULT_MODEL = "openai/gpt-oss-120b";
 const OPENROUTER_DEFAULT_MODEL = "openrouter/free";
 export const OPENROUTER_FREE_MODEL_POOLS = [
   [
-    "inclusionai/ling-3.0-flash:free",
-    "nvidia/nemotron-3.5-lightning:free",
+    "google/gemma-4-31b-it:free",
+    "google/gemma-4-26b-a4b-it:free",
+    "nvidia/nemotron-3-ultra-550b-a55b:free"
+  ],
+  [
+    "inclusionai/ling-3.0-flash-fin:free",
+    "poolside/laguna-s-2.1:free",
     "dots-studio/dots-3-note-preview:free"
   ],
   [
-    "poolside/laguna-s-2.1:free",
-    "google/gemma-4-26b-a4b-it:free",
-    "google/gemma-4-31b-it:free"
-  ],
-  [
-    "nvidia/nemotron-3-ultra-550b-a55b:free",
-    "inclusionai/ling-3.0-flash-fin:free",
+    "inclusionai/ling-3.0-flash:free",
+    "nvidia/nemotron-3.5-lightning:free",
     "inclusionai/ling-3.0-flash-vl:free"
   ]
 ] as const;
