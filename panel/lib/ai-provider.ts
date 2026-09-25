@@ -14,6 +14,10 @@ const GROQ_BASE_URL = "https://api.groq.com/openai/v1";
 const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 const GROQ_DEFAULT_MODEL = "openai/gpt-oss-120b";
 const OPENROUTER_DEFAULT_MODEL = "openrouter/free";
+const OPENROUTER_FREE_FALLBACK_MODELS = [
+  "google/gemma-4-26b-a4b-it:free",
+  "google/gemma-4-31b-it:free"
+];
 
 function env(name: string) {
   return process.env[name]?.trim() || "";
@@ -89,6 +93,20 @@ export function resolveAIProvider(): AIProviderConfig {
   return configFor(primaryProviderName());
 }
 
+function expandProvider(config: AIProviderConfig): AIProviderConfig[] {
+  if (config.provider !== "openrouter") return [config];
+
+  const models = config.model === OPENROUTER_DEFAULT_MODEL
+    ? [...OPENROUTER_FREE_FALLBACK_MODELS, config.model]
+    : [config.model, ...OPENROUTER_FREE_FALLBACK_MODELS];
+
+  return models.map((model) => ({
+    ...config,
+    model,
+    endpoint: config.baseUrl ? `${config.baseUrl}/responses` : ""
+  }));
+}
+
 export function resolveAIProviders(): AIProviderConfig[] {
   const primary = primaryProviderName();
   const requested = (env("AI_FALLBACK_ORDER") || "groq,openrouter,custom,openai")
@@ -104,10 +122,12 @@ export function resolveAIProviders(): AIProviderConfig[] {
   for (const name of order) {
     const config = configFor(name);
     if (!config.configured) continue;
-    const key = `${config.provider}|${config.baseUrl}|${config.model}|${config.apiKey.slice(0, 8)}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    providers.push(config);
+    for (const candidate of expandProvider(config)) {
+      const key = `${candidate.provider}|${candidate.baseUrl}|${candidate.model}|${candidate.apiKey.slice(0, 8)}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      providers.push(candidate);
+    }
   }
   return providers;
 }
