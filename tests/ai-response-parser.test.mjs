@@ -22,3 +22,33 @@ test("parseAI accepts a plain grounded proposal body", () => {
 test("parseAI does not accept analysis-only output", () => {
   assert.equal(parseAI("Reasoning: I should think about the user request before producing the proposal."), null);
 });
+
+test("parseAI rejects exposed thinking-process output", () => {
+  const leaked = [
+    "Here's a thinking process:",
+    "",
+    "1. **Analyze the Request:**",
+    "- **Input:** A JSON object with project details from a freelance marketplace.",
+    "- **Title:** ساخت وب اپلیکیشن مدیریت مشتری",
+    "- **Brief:** The client provided almost no detail beyond the project title.",
+    "- **Skills:** []",
+    "- **Expected Depth:** Write 2-3 concise, specific paragraphs."
+  ].join("\n");
+  assert.equal(parseAI(leaked), null);
+});
+
+test("parseAI rejects field-by-field internal notes even without an analysis heading", () => {
+  const leaked = [
+    "**Input:** project JSON",
+    "**Title:** CRM web app",
+    "**Brief:** customer management and sales",
+    "**Constraints:** Persian response",
+    "I should now draft the response."
+  ].join("\n");
+  assert.equal(parseAI(leaked), null);
+});
+
+test("parseAI still accepts a real proposal that uses analytical language naturally", () => {
+  const proposal = "برای وب‌اپ مدیریت مشتری، ساختار مشتری‌ها، پیگیری فروش و وضعیت هر سرنخ را از ابتدا جدا می‌کنم تا گزارش‌گیری و توسعه بعدی به داده‌های پراکنده وابسته نشود. بعد از مشخص شدن نقش‌های کاربری، جریان ثبت و پیگیری مشتری را روی همان مدل داده پیاده می‌کنم.";
+  assert.equal(parseAI(proposal)?.proposal, proposal);
+});
