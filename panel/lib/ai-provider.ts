@@ -17,10 +17,7 @@ const OPENROUTER_DEFAULT_MODEL = "openrouter/free";
 export const OPENROUTER_FREE_FALLBACK_MODELS = [
   "nvidia/nemotron-3-ultra-550b-a55b:free",
   "poolside/laguna-s-2.1:free",
-  "inclusionai/ling-3.0-flash:free",
-  "google/gemma-4-26b-a4b-it:free",
-  "google/gemma-4-31b-it:free",
-  "openrouter/free"
+  "inclusionai/ling-3.0-flash:free"
 ];
 
 function env(name: string) {
@@ -99,12 +96,14 @@ export function resolveAIProvider(): AIProviderConfig {
 
 export function resolveAIProviders(): AIProviderConfig[] {
   const primary = primaryProviderName();
-  const requested = (env("AI_FALLBACK_ORDER") || "groq,openrouter,custom,openai")
+  const allowOpenAIFallback = env("OPENAI_FALLBACK_ENABLED").toLowerCase() === "true";
+  const requested = (env("AI_FALLBACK_ORDER") || "groq,openrouter,custom")
     .split(",")
     .map((value) => value.trim().toLowerCase())
     .filter((value): value is AIProviderName =>
       value === "groq" || value === "openrouter" || value === "custom" || value === "openai"
-    );
+    )
+    .filter((value) => value !== "openai" || primary === "openai" || allowOpenAIFallback);
 
   const order: AIProviderName[] = [primary, ...requested.filter((item) => item !== primary)];
   const seen = new Set<string>();
