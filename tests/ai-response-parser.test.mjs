@@ -37,5 +37,8 @@ test("rejects exposed reasoning even when followed by valid JSON", () => {
   assert.equal(looksLikeReasoningLeak(leaked), true);
   assert.equal(parseAI(JSON.stringify({ proposal: "Analysis: first parse the brief. " + JSON.parse(good).proposal, durationDays: "7" })), null);
   assert.equal(parseAI("<think>internal notes</think>\n" + good), null);
+  for (const heading of ["Internal notes:", "## Analysis", "**Reasoning:**", "internal-notes:"]) {
+    assert.equal(parseAI(JSON.stringify({ proposal: heading + "\n" + JSON.parse(good).proposal, durationDays: "7" })), null);
+  }
   assert.equal(parseAI(JSON.stringify({ proposal: "**Title:** CRM. " + JSON.parse(good).proposal, durationDays: "7" })), null);
 });
