@@ -75,9 +75,9 @@ test("bid generation fails closed while bounding provider failover latency", () 
   assert.match(bidSource, /AI_NOT_CONFIGURED/);
   assert.match(bidSource, /resolveAIProviders/);
   assert.doesNotMatch(bidSource, /const apiKey = process\.env\.OPENAI_API_KEY/);
-  assert.match(bidSource, /GENERATION_BUDGET_MS = 22_000/);
-  assert.match(bidSource, /PROVIDER_TIMEOUT_MS = 9_000/);
-  assert.match(bidSource, /OPENROUTER_FAILOVER_TIMEOUT_MS = 7_000/);
+  assert.match(bidSource, /GENERATION_BUDGET_MS = 90_000/);
+  assert.match(bidSource, /PROVIDER_TIMEOUT_MS = 30_000/);
+  assert.match(bidSource, /OPENROUTER_FAILOVER_TIMEOUT_MS = 30_000/);
   assert.match(bidSource, /providerTimeout\(provider, remainingMs\)/);
   assert.match(bidSource, /provider\.fallbackModels\?\.length/);
   assert.match(bidSource, /provider\.fallbackModels\.slice\(0, 2\)/);
@@ -86,7 +86,8 @@ test("bid generation fails closed while bounding provider failover latency", () 
   assert.match(bidSource, /Object\.keys\(fields\)\.sort\(\)/);
   assert.doesNotMatch(bidSource, /labelledProposal|jsonCandidates/);
   assert.match(bidSource, /sort: "latency"/);
-  assert.match(bidSource, /reasoning = \{ exclude: true \}/);
+  assert.match(bidSource, /reasoning = \{ enabled: false, exclude: true \}/);
+  assert.match(bidSource, /models = \[provider.model, \.\.\.provider.fallbackModels/);
   assert.match(bidSource, /looksLikeReasoningLeak/);
   assert.match(bidSource, /reasoning_leak/);
   assert.match(bidSource, /max_tokens: provider\.provider === "openrouter" \? 700 : 650/);

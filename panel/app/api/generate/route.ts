@@ -7,6 +7,7 @@ import type { ProjectPayload, ProjectRecord } from "@/lib/types";
 import { comesFromBlockedCountry } from "@/lib/candidate-policy";
 
 export const runtime = "nodejs";
+export const maxDuration = 120;
 
 function cors() {
   return {

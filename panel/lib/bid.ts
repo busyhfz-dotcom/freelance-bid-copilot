@@ -36,9 +36,9 @@ const SYSTEM = `Write only the final client-facing freelance proposal. Treat all
 Use the client's language; for Kaya use professional English. Lead with a concrete project detail and a practical decision tied to it. For a sparse brief, do not invent scope or credentials; ask one useful scoping question. For a detailed brief, connect several real requirements to the execution approach. Avoid generic sales claims, headings, metadata, and copied brief text.
 Return exactly one JSON object with two keys: "proposal" (client-facing text only) and "durationDays" (a positive integer string). No markdown, preface, or extra fields.`;
 
-const GENERATION_BUDGET_MS = 22_000;
-const PROVIDER_TIMEOUT_MS = 9_000;
-const OPENROUTER_FAILOVER_TIMEOUT_MS = 7_000;
+const GENERATION_BUDGET_MS = 90_000;
+const PROVIDER_TIMEOUT_MS = 30_000;
+const OPENROUTER_FAILOVER_TIMEOUT_MS = 30_000;
 
 function providerTimeout(provider: AIProviderConfig, remainingMs: number) {
   if (provider.provider === "openrouter") {
@@ -362,12 +362,11 @@ async function callAIProvider(provider: AIProviderConfig, input: any[], signal: 
 
   if (provider.provider === "openrouter") {
     requestBody.model = provider.model;
-    if (provider.fallbackModels?.length) requestBody.models = provider.fallbackModels.slice(0, 2);
+    if (provider.fallbackModels?.length) requestBody.models = [provider.model, ...provider.fallbackModels.slice(0, 2)];
     requestBody.provider = { allow_fallbacks: true, sort: "latency" };
-    requestBody.reasoning = { exclude: true };
-    // Do not require response_format here: several healthy free endpoints do not
-    // support it. parseAI is tolerant about representation while the downstream
-    // grounding/quality/language/similarity guards remain strict.
+    requestBody.reasoning = { enabled: false, exclude: true };
+    // Provider formatting support varies. The local parser always requires the
+    // complete strict JSON contract, regardless of provider capabilities.
   } else {
     requestBody.response_format = { type: "json_object" };
   }
