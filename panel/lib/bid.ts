@@ -276,6 +276,7 @@ function extractResponseText(data: any): string {
 type ParsedAI = { proposal: string; durationDays?: string | number };
 
 const REASONING_LEAK_PATTERNS = [
+  /(?:^|\n)\s*(?:#{1,6}\s*|[-*]\s*)?\*{0,2}(?:internal[-_ ]notes?|analysis|reasoning|thoughts?|یادداشت[‌ ]داخلی|تحلیل داخلی|روند تفکر)\b\*{0,2}\s*[:：]?/im,
   /here(?:'|’)s\s+(?:a\s+|the\s+)?(?:thinking|reasoning)\s+process/i,
   /\b(?:thinking|reasoning)\s+process\b/i,
   /\bchain[- ]of[- ]thought\b/i,
@@ -483,8 +484,8 @@ export async function generateBid(project: ProjectPayload, previousBids: BidMemo
             freelancerProfile: clean(project.freelancerProfile || "").slice(0, openRouter ? 1600 : 2500),
             locallyRecommendedDurationDays: duration,
             expectedDepth: complex
-              ? "Use 3-4 substantive natural paragraphs and connect multiple requirements to implementation decisions."
-              : "Use 2-3 concise but specific paragraphs. Every paragraph must add project-specific value.",
+              ? "Use 3 concise natural paragraphs, 900-1300 characters total including spaces. Connect real requirements to implementation decisions."
+              : "Use 2 concise specific paragraphs, 500-900 characters total including spaces. Every paragraph must add project-specific value.",
             projectDetailsToCover: fingerprintInstruction(fingerprint),
             regenerationInstruction: attempt > 0
               ? `The previous draft was rejected for: ${rejectedReasons.join(", ") || lastFailure}. Rewrite from scratch. Do not paraphrase the rejected draft. Rejected draft: ${rejectedDraft.slice(0, 700)}`
