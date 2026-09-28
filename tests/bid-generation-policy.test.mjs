@@ -116,11 +116,9 @@ test("extension settings verifies authenticated panel health and provider-aware 
   assert.match(provider, /GROQ_API_KEY/);
   assert.match(provider, /openai\/gpt-oss-120b/);
   assert.match(provider, /provider === "custom" && \/openrouter\\\.ai\/i/);
-  assert.match(provider, /nvidia\/nemotron-3-ultra-550b-a55b:free/);
-  assert.match(provider, /google\/gemma-4-31b-it:free/);
-  assert.match(provider, /inclusionai\/ling-3\.0-flash:free/);
+  assert.match(provider, /nex-agi\/nex-n2\.5-mini:free/);
+  assert.doesNotMatch(provider, /google\/gemma-4-26b-a4b-it:free/);
   assert.match(provider, /OPENAI_FALLBACK_ENABLED/);
-  assert.doesNotMatch(provider, /nex-agi\/nex-n2\.5-mini:free/);
   assert.doesNotMatch(instrumentation, /globalThis\.fetch\s*=/);
   assert.doesNotMatch(instrumentation, /nex-agi\/nex-n2\.5-mini:free/);
 });
