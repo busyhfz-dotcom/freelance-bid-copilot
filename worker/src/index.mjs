@@ -45,12 +45,14 @@ const markets = {
     stateBase64: process.env.PONISHA_STORAGE_STATE_B64 || ""
   }
 };
+const enabledMarkets = new Set(String(process.env.ENABLED_MARKETS || "kaya,ponisha")
+  .split(",").map((value) => value.trim().toLowerCase()).filter((value) => value in markets));
 const notificationBatchSize = clamp(process.env.NOTIFICATION_BATCH_PER_CYCLE, 5, 1, 30);
 // This covers two bounded site scans, a bounded notification batch, and cleanup.
 // It is deliberately longer than a normal cycle so healthy slow scans are not restarted.
 const cycleWatchdogTimeout = Math.max(
   clamp(process.env.WORKER_WATCHDOG_SECONDS, 480, 180, 1800) * 1000,
-  siteScanTimeout * Object.keys(markets).length + notificationBatchSize * 20_000 + 30_000
+  siteScanTimeout * enabledMarkets.size + notificationBatchSize * 20_000 + 30_000
 );
 
 let browser;
@@ -215,6 +217,14 @@ async function enqueuePendingNotifications(projects) {
 async function flushPendingNotifications() {
   let queuedCount = 0;
   let queueFailures = 0;
+  const paused = pendingNotifications.filter((project) => !enabledMarkets.has(project.site));
+  if (paused.length) {
+    for (const project of paused) markSeen(project);
+    pendingNotifications = pendingNotifications.filter((project) => enabledMarkets.has(project.site));
+    await persistPendingNotifications();
+    await atomicWrite(seenFile, JSON.stringify([...seen].slice(-5000)));
+    console.log(`notification outbox: dropped ${paused.length} paused-market item(s)`);
+  }
   const batch = pendingNotifications.slice(0, notificationBatchSize);
   for (const project of batch) {
     try {
@@ -297,15 +307,21 @@ async function report(input) {
 }
 
 function hasBlock(text, url) {
-  const value = `${url}\n${text}`.toLowerCase();
-  if (/captcha|recaptcha|hcaptcha|verify you are human|من ربات نیستم|کپچا/.test(value)) return "captcha";
-  if (/\/login|\/signin|ورود به حساب|وارد حساب|sign in|log in/.test(value)) return "login_required";
+  const address = String(url || "").toLowerCase();
+  // Marketplace listings include arbitrary client text. A project that mentions
+  // login or CAPTCHA is not evidence that the current browser is blocked.
+  const firstScreen = String(text || "").slice(0, 1200).toLowerCase();
+  if (/\/captcha(?:[/?#]|$)/.test(address)) return "captcha";
+  if (/\/login(?:[/?#]|$)|\/signin(?:[/?#]|$)/.test(address)) return "login_required";
+  if (/verify you are human|من ربات نیستم|hcaptcha challenge|recaptcha challenge/.test(firstScreen)) return "captcha";
+  if (/ورود به حساب|وارد حساب|sign in|log in/.test(firstScreen) && firstScreen.length < 500) return "login_required";
   return "";
 }
 
 async function pageBlock(page) {
   const text = await page.locator("body").innerText({ timeout: 5000 }).catch(() => "");
-  return hasBlock(text.slice(0, 25_000), page.url());
+  const widget = await page.locator('iframe[src*="captcha"], iframe[src*="hcaptcha"], iframe[src*="recaptcha"]').filter({ visible: true }).count().catch(() => 0);
+  return widget ? "captcha" : hasBlock(text, page.url());
 }
 
 async function injectAdapters(page) {
@@ -388,6 +404,7 @@ async function scanSiteOnce(site) {
       await withinTimeout(`${site} list navigation`, () => listingPage.goto(markets[site].listUrl, { waitUntil: "domcontentloaded", timeout: browserOperationTimeout }));
       const block = await withinTimeout(`${site} list block check`, () => pageBlock(listingPage));
       if (block) {
+        console.warn(`scan ${site}: blocked ${block} at ${new URL(listingPage.url()).pathname}`);
         sessionState[site] = block;
         blockedUntil.set(site, Date.now() + blockedSiteRetry);
         await heartbeat("blocked", `${site}: ${block}; manual login or CAPTCHA action is required`, site);
@@ -458,7 +475,7 @@ async function scanSiteOnce(site) {
 async function scanCycle() {
   const candidates = [];
   let siteFailures = 0;
-  for (const site of Object.keys(markets)) {
+  for (const site of enabledMarkets) {
     try {
       candidates.push(...await scanSite(site));
     } catch (error) {

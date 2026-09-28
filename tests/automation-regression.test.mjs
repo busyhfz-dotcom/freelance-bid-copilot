@@ -202,7 +202,7 @@ test("Worker quarantines poisoned inspections and recycles before heap OOM", () 
 test("a hung marketplace cannot block the other marketplace or hide Worker health", () => {
   const worker = read("worker/src/index.mjs");
   const scanCycle = worker.slice(worker.indexOf("async function scanCycle"), worker.indexOf("async function guardedScanCycle"));
-  assert.match(scanCycle, /for \(const site of Object\.keys\(markets\)\)/);
+  assert.match(scanCycle, /for \(const site of enabledMarkets\)/);
   assert.match(scanCycle, /siteFailures \+= 1/);
   assert.match(scanCycle, /site_scan_failed/);
   assert.match(worker, /scanBusy = false/);
