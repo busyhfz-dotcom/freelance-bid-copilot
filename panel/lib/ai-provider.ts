@@ -18,7 +18,7 @@ const GROQ_DEFAULT_MODEL = "openai/gpt-oss-120b";
 const OPENROUTER_DEFAULT_MODEL = "openrouter/free";
 export const OPENROUTER_FREE_MODEL_POOLS = [
   [
-    "nex-agi/nex-n2.5-mini:free"
+    "nex-agi/nex-n2.5-mini"
   ]
 ] as const;
 
