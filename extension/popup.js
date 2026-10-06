@@ -1,15 +1,25 @@
-const ENGINE_VERSION = "0.7.5";
+const ENGINE_VERSION = "0.7.6";
 const $ = (id) => document.getElementById(id);
 function send(type, payload) { return chrome.runtime.sendMessage({ type, payload }); }
 function status(t, k = "") { $("status").textContent = t; $("status").className = `status ${k}`; }
 function busy(on) { document.querySelectorAll("button").forEach((b) => { b.disabled = on; }); }
 let currentQueue = null;
 let currentProjectUrl = "";
-function cleanUrl(url = "") { try { const u = new URL(url); u.hash = ""; return u.toString(); } catch { return url; } }
+function cleanUrl(url = "") { try { const u = new URL(url); u.hash = ""; for (const key of [...u.searchParams.keys()]) if (/^(utm_.+|ref|source|from|campaign|tracking|fbclid|gclid)$/i.test(key)) u.searchParams.delete(key); u.pathname = u.pathname.replace(/\/+$/, "") || "/"; return u.toString(); } catch { return url; } }
 function sameUrl(a, b) { return !!a && !!b && cleanUrl(a) === cleanUrl(b); }
 
+function hideGenerated() {
+  $("preview").dataset.ready = "";
+  $("preview").classList.add("hidden");
+  $("bidPreview").textContent = "";
+}
+
 function showGenerated(i) {
-  if (!i?.bid) return;
+  if (typeof i?.bid !== "string" || globalThis.CopilotGuard.unsafeBid(i.bid)) {
+    hideGenerated();
+    status("متن بید نامعتبر است؛ دوباره Generate Bid را اجرا کن.", "error");
+    return false;
+  }
   $("preview").dataset.ready = "1";
   $("preview").classList.remove("hidden");
   $("decision").textContent = i.decision || "MAYBE";
@@ -32,6 +42,7 @@ function showGenerated(i) {
   $("skillGap").classList.toggle("hidden", !gaps.length);
   $("bidPreview").textContent = i.bid;
   updatePageMode();
+  return true;
 }
 
 function queueDecisionClass(value = "") { return value.toLowerCase().replace(/[^a-z]/g, ""); }
@@ -90,13 +101,18 @@ async function inspect() {
     const r = await send("COPILOT_INSPECT");
     if (!r?.ok) throw new Error(r?.reason || "صفحه خوانده نشد.");
     const p = r.project;
+    if (!sameUrl(currentProjectUrl, p.url)) hideGenerated();
     currentProjectUrl = p.url || "";
     $("site").textContent = `${p.site.toUpperCase()} • ${new URL(p.url).hostname}`;
     $("project").classList.remove("hidden");
     $("title").textContent = p.title || "عنوان تشخیص داده نشد";
     $("budget").textContent = p.budget || "بودجه تشخیص داده نشد";
     $("detected").innerHTML = Object.entries(p.detected || {}).map(([k, v]) => `<span class="${v ? "ok" : ""}">${k}: ${v ? "✓" : "—"}</span>`).join("");
-    chrome.storage.local.get("latestGenerated", (s) => { if (s.latestGenerated?.engineVersion === ENGINE_VERSION && sameUrl(s.latestGenerated?.url, p.url)) showGenerated(s.latestGenerated); else updatePageMode(); });
+    chrome.storage.local.get("latestGenerated", (s) => {
+      if (!sameUrl(currentProjectUrl, p.url)) return;
+      if (s.latestGenerated?.engineVersion === ENGINE_VERSION && sameUrl(s.latestGenerated?.url, p.url)) showGenerated(s.latestGenerated);
+      else { hideGenerated(); updatePageMode(); }
+    });
     updatePageMode();
     return p;
   } catch (e) { status(e.message, "error"); return null; }
@@ -107,7 +123,7 @@ async function action(type, success) {
   try {
     const r = await send(type);
     if (!r?.ok) throw new Error(r?.reason || "عملیات ناموفق بود");
-    if (r.result) showGenerated(r.result);
+    if (r.result && !showGenerated(r.result)) throw new Error("متن بید نامعتبر است؛ دوباره Generate Bid را اجرا کن.");
     status(success(r), "ok"); await inspect();
   } catch (e) { status(e.message, "error"); } finally { busy(false); }
 }

@@ -1,4 +1,13 @@
-# Freelance Bid Copilot v0.7.4
+# Freelance Bid Copilot
+
+## Extension v0.7.6 — Connection and preview fixes
+
+- Aligns the content-script handshake with the installed extension version, restoring Inspect, Scan and Generate after an update.
+- Rejects non-text or reasoning-filled proposals before saving or displaying them.
+- Clears the previous project's proposal when the active project changes and treats tracking-only URL variants as the same project.
+- Keeps the extension's version independent of the panel, desktop and Worker release versions.
+
+Validation: 114 automated tests and JavaScript syntax checks pass.
 
 ## v0.7.4 — Human project analysis and extension wake recovery
 
