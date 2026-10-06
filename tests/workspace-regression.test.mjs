@@ -155,17 +155,18 @@ test("Electron exposes independent browser recovery and workspace refresh", () =
   assert.match(preload, /reloadWorkspace/);
 });
 
-test("panel, desktop, and extension versions stay aligned", () => {
+test("server components and extension runtime versions stay internally aligned", () => {
   const panel = JSON.parse(read("panel/package.json"));
   const desktop = JSON.parse(read("desktop/package.json"));
   const extension = JSON.parse(read("extension/manifest.json"));
   const worker = JSON.parse(read("worker/package.json"));
   assert.equal(panel.version, desktop.version);
-  assert.equal(panel.version, extension.version);
   assert.equal(panel.version, worker.version);
-  assert.match(read("extension/popup.js"), new RegExp(`ENGINE_VERSION = "${panel.version.replaceAll(".", "\\.")}"`));
-  assert.match(read("extension/service-worker.js"), new RegExp(`ENGINE_VERSION = "${panel.version.replaceAll(".", "\\.")}"`));
-  assert.match(read("extension/options.html"), new RegExp(`v${panel.version.replaceAll(".", "\\.")}`));
+  const extensionVersion = extension.version.replaceAll(".", "\\.");
+  assert.match(read("extension/popup.js"), new RegExp(`ENGINE_VERSION = "${extensionVersion}"`));
+  assert.match(read("extension/service-worker.js"), new RegExp(`ENGINE_VERSION = "${extensionVersion}"`));
+  assert.match(read("extension/content.js"), new RegExp(`CONTENT_VERSION = "${extensionVersion}"`));
+  assert.match(read("extension/options.html"), new RegExp(`v${extensionVersion}`));
   assert.match(read("panel/app/page.tsx"), new RegExp(`v${panel.version.replaceAll(".", "\\.")}`));
   assert.match(read("worker/src/index.mjs"), new RegExp(`VERSION = "${panel.version.replaceAll(".", "\\.")}"`));
 });

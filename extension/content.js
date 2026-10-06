@@ -1,5 +1,5 @@
 (() => {
-  const CONTENT_VERSION = "0.7.4";
+  const CONTENT_VERSION = "0.7.6";
   const previous = globalThis.__BID_COPILOT_CONTENT_STATE__;
   if (previous?.listener) chrome.runtime.onMessage.removeListener(previous.listener);
 
